@@ -11,4 +11,8 @@ contracts/artifacts/
 
 # Docker
 *.log
-tmp/
+# Chain Data
+chain/data/
+
+# Editor
+.vscode/
