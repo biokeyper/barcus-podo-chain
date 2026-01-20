@@ -217,9 +217,9 @@ Barcus uses a **naive BFT loop** with three gossip topics:
 
 **Expected logs (inbound):**
 ```
-[P2P] Incoming block:proposal from ...123456: height 1
-[P2P] Incoming vote:prevote from ...123456: height 1
-[P2P] Incoming vote:precommit from ...123456: height 1
+[P2P] Incoming block:proposal from Qm123456: height 1
+[P2P] Incoming vote:prevote from Qm123456: height 1
+[P2P] Incoming vote:precommit from Qm123456: height 1
 ```
 
 Consensus is reached when ≥2/3 validators send precommits for the same block.
