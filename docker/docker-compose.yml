@@ -1,0 +1,35 @@
+version: "3.8"
+services:
+  node1:
+    build:
+      context: ..
+      dockerfile: docker/node.Dockerfile
+    environment:
+      - NODE_ID=node1
+      - RPC_PORT=8545
+      - P2P_PORT=7001
+      - VALIDATOR_ADDR=val1
+      - DATA_DIR=/app/data/node1
+    ports:
+      - "8545:8545"
+      - "7001:7001"
+    volumes:
+      - node1:/app/data
+  node2:
+    build:
+      context: ..
+      dockerfile: docker/node.Dockerfile
+    environment:
+      - NODE_ID=node2
+      - RPC_PORT=8546
+      - P2P_PORT=7002
+      - VALIDATOR_ADDR=val2
+      - DATA_DIR=/app/data/node2
+    ports:
+      - "8546:8545"
+      - "7002:7002"
+    volumes:
+      - node2:/app/data
+volumes:
+  node1:
+  node2:
