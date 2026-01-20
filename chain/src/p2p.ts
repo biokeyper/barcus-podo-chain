@@ -34,6 +34,7 @@ export class P2P {
       streamMuxers: [yamux()],
       services: {
         pubsub: gossipsub({
+          allowPublishToZeroTopicPeers: true,
           floodPublish: true,
           D: 2,
           Dlo: 1,
@@ -50,6 +51,7 @@ export class P2P {
     await this.node.start();
 
     const pubsub = (this.node.services as any).pubsub;
+
     await pubsub.subscribe("block:proposal");
     await pubsub.subscribe("vote:prevote");
     await pubsub.subscribe("vote:precommit");
@@ -58,7 +60,11 @@ export class P2P {
     console.log(`[P2P] Listening addresses:`, this.node.getMultiaddrs().map(a => a.toString()));
     console.log(`[P2P] Node listening on port ${port}, waiting for peers...`);
 
-    // Listen for peer discovery
+    // Listen for peer discovery and connection events
+    this.node.addEventListener('peer:connect', (evt) => {
+      console.log(`[P2P] Connected to peer: ${evt.detail.toString().slice(0, 8)}`);
+    });
+
     this.node.addEventListener('peer:discovery', async (evt) => {
       const peerId = evt.detail.id.toString();
       const addrs = evt.detail.multiaddrs;
