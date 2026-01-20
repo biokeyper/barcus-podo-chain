@@ -95,48 +95,25 @@ make clean
 
 ---
 
-## 🖥️ Running Locally (without Docker)
+### Chain Node (CLI)
 
-### Single Node
+The blockchain logic resides in the `chain/` directory. For detailed configuration, architecture, and API docs, see [chain/README.md](chain/README.md).
 
-For development and debugging, you can run a single node directly:
+To run a multi-node devnet locally:
 
-```bash
-cd chain
-npm run dev
-```
+1. **Terminal 1 - Node 1:**
+   ```bash
+   cd chain
+   NODE_ID=node1 P2P_PORT=7001 RPC_PORT=8545 VALIDATOR_ADDR=val1 npm start
+   ```
 
-This will start a Barcus node with JSON-RPC available at `http://localhost:8545`.
-
-### Multiple Nodes
-
-To run a multi-node devnet locally (in separate terminal windows):
-
-**Terminal 1 - Node 1:**
-```bash
-cd chain
-NODE_ID=node1 P2P_PORT=7001 RPC_PORT=8545 VALIDATOR_ADDR=val1 npm start
-```
-
-Wait for node1 to start, then copy its full listening address from the console output:
-```
-[P2P] Listening addresses: [ '/ip4/127.0.0.1/tcp/7001/p2p/12D3KooW...' ]
-```
-
-**Terminal 2 - Node 2 (with bootstrap peer):**
-```bash
-cd chain
-BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/<PEER_ID_FROM_NODE1>" \
-NODE_ID=node2 P2P_PORT=7002 RPC_PORT=8546 VALIDATOR_ADDR=val2 npm start
-```
-
-Replace `<PEER_ID_FROM_NODE1>` with the actual peer ID from node1's output.
-
-The nodes will discover each other via libp2p and start gossiping blocks. You should see messages like:
-```
-[P2P] Successfully connected to bootstrap peer: /ip4/127.0.0.1/tcp/7001/p2p/...
-[P2P] Connected to 1 peer(s), stopping retry.
-```
+2. **Terminal 2 - Node 2:**
+   Copy Node 1's peer ID and run:
+   ```bash
+   cd chain
+   BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/<NODE1_ID>" \
+   NODE_ID=node2 P2P_PORT=7002 RPC_PORT=8546 VALIDATOR_ADDR=val2 npm start
+   ```
 
 ### Contracts
 
@@ -172,53 +149,9 @@ npx hardhat run scripts/deploy.ts --network localhost
 ---
 
 
-## 🩺 Troubleshooting
-
-- **Missing type declarations:**  
-  Install Node/Express types:  
-  ```bash
-  npm install --save-dev @types/node @types/express @types/body-parser
-  ```
-
-- **LevelDB errors on Ubuntu:**  
-  Ensure build tools are installed:  
-  ```bash
-  sudo apt install -y build-essential
-  ```
-
-- **Port conflicts:**  
-  Change `RPC_PORT` and `P2P_PORT` in `.env` files under `chain/`.
-
-- **Libp2p API changes (p2p.ts):**  
-  If you see errors like  
-  ```
-  error TS2353: Object literal may only specify known properties, and 'pubsub' does not exist in type 'Libp2pOptions'
-  ```  
-  Update `p2p.ts` to use the new API:  
-  ```ts
-  this.node = await createLibp2p({
-    addresses: { listen: [`/ip4/0.0.0.0/tcp/${port}`] },
-    transports: [tcp()],
-    connectionEncryption: [noise()],
-    streamMuxers: [mplex()],
-    services: {
-      pubsub: gossipsub(),
-    },
-  });
-  ```
-  And access pubsub via `this.node.services.pubsub`.
-
-- **Level package changes (state.ts):**  
-  If you see errors like  
-  ```
-  error TS2724: 'level/index' has no exported member named 'LevelDB'
-  ```  
-  Replace `import level from 'level'` with:  
-  ```ts
-  import { Level } from "level";
-  this.db = new Level<string, string>(path, { valueEncoding: "utf8" });
-  ```
-  Remove any references to `LevelDB`.
+- **Missing build tools:** LevelDB requires C++ compilation. On Linux: `sudo apt install build-essential`.
+- **Port conflicts:** Ensure `8545/8546` (RPC) and `7001/7002` (P2P) are free.
+- **Libp2p/Level errors:** Refer to [chain/README.md](chain/README.md#technical-notes) for module-specific troubleshooting.
 
 ---
 
