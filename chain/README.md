@@ -82,6 +82,11 @@ Retrieve registration info for a commitment root.
 npm run build
 ```
 
+### Test
+```bash
+npm test
+```
+
 ### Dev Mode (Auto-reload)
 ```bash
 npm run dev

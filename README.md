@@ -126,6 +126,11 @@ npx hardhat run scripts/deploy.ts --network localhost
   cd chain
   npm run build
   ```
+- **Run tests (chain):**  
+  ```bash
+  cd chain
+  npm test
+  ```
 - **Run tests (contracts):**  
   ```bash
   cd contracts
@@ -203,11 +208,18 @@ Barcus uses a **naive BFT loop** with three gossip topics:
 - **vote:prevote** – validators signal acceptance of the proposal.  
 - **vote:precommit** – validators confirm quorum and commit.
 
-**Expected logs:**
+**Expected logs (outbound):**
 ```
 [P2P] Published message on block:proposal to 2 peers.
 [P2P] Published message on vote:prevote to 2 peers.
 [P2P] Published message on vote:precommit to 2 peers.
+```
+
+**Expected logs (inbound):**
+```
+[P2P] Incoming block:proposal from ...123456: height 1
+[P2P] Incoming vote:prevote from ...123456: height 1
+[P2P] Incoming vote:precommit from ...123456: height 1
 ```
 
 Consensus is reached when ≥2/3 validators send precommits for the same block.

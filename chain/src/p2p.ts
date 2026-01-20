@@ -56,6 +56,28 @@ export class P2P {
     await pubsub.subscribe("vote:prevote");
     await pubsub.subscribe("vote:precommit");
 
+    // Add message handlers
+    pubsub.addEventListener('message', (evt: any) => {
+      const { topic, data, from } = evt.detail;
+      const peerId = from.toString().slice(-6);
+
+      try {
+        const decoded = JSON.parse(new TextDecoder().decode(data));
+        let height = decoded.height;
+        if (topic === 'block:proposal' && decoded.header) {
+          height = decoded.header.height;
+        }
+
+        if (['block:proposal', 'vote:prevote', 'vote:precommit'].includes(topic)) {
+          console.log(`[P2P] Incoming ${topic} from ...${peerId}: height ${height}`);
+        } else {
+          console.log(`[P2P] Ignored message on unknown topic ${topic} from ...${peerId}`);
+        }
+      } catch (err) {
+        console.error(`[P2P] Failed to decode message on topic ${topic}:`, err);
+      }
+    });
+
     console.log(`[P2P] Peer ID: ${this.node.peerId.toString()}`);
     console.log(`[P2P] Listening addresses:`, this.node.getMultiaddrs().map(a => a.toString()));
     console.log(`[P2P] Node listening on port ${port}, waiting for peers...`);
