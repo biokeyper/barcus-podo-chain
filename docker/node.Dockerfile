@@ -9,6 +9,7 @@ COPY chain ./chain
 
 # Build using your local modules
 WORKDIR /app/chain
+RUN npm install
 RUN npm run build
 
 # Start the node

@@ -94,6 +94,10 @@ jobs:
       working-directory: ./chain
       run: npm ci
 
+    - name: Install Contract Dependencies
+      working-directory: ./contracts
+      run: npm ci
+
     - name: Start Devnet (3 Nodes)
       run: |
         npm install -g typescript ts-node
