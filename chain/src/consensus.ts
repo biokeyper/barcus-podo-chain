@@ -1,8 +1,9 @@
 import { Block, Vote } from './types.js';
-import { merkleRoot, hashBlock } from './block.js';
+import { merkleRoot, hashBlock, hashTx } from './block.js';
 import { State, applyTx } from './state.js';
 import { Mempool } from './mempool.js';
 import { P2P } from './p2p.js';
+import { validateBlockProposal } from './validation.js';
 
 export class Consensus {
   constructor(
@@ -18,7 +19,7 @@ export class Consensus {
     const header = {
       height,
       prevHash: await this.p2p.getPrevHash(),
-      txRoot: merkleRoot(txs.map(t => JSON.stringify(t))),
+      txRoot: merkleRoot(txs.map(tx => hashTx(tx))),
       timestamp: Date.now(),
       proposer: this.me,
     };
@@ -31,6 +32,17 @@ export class Consensus {
       height += 1;
 
       const block = await this.propose(height);
+      
+      // Validate block proposal before broadcasting
+      const expectedHeight = height;
+      const expectedPrevHash = await this.p2p.getPrevHash();
+      try {
+        validateBlockProposal(block, expectedHeight, expectedPrevHash);
+      } catch (err) {
+        console.error(`[Consensus] Invalid block proposal at height ${height}:`, err);
+        continue; // Skip this round if proposal is invalid
+      }
+      
       const blockHash = hashBlock(block);
       await this.p2p.broadcast('block:proposal', block);
 

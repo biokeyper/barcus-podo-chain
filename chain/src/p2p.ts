@@ -8,6 +8,8 @@ import { mdns } from "@libp2p/mdns";
 import { bootstrap } from "@libp2p/bootstrap";
 import { identify } from "@libp2p/identify";
 import { multiaddr } from "@multiformats/multiaddr";
+import { Block } from "./types.js";
+import { validateBlockProposal, ValidationError } from "./validation.js";
 
 export class P2P {
   node!: Libp2p;
@@ -16,6 +18,8 @@ export class P2P {
   private dialedPeers = new Set<string>();
   // Map<height:type, Map<validator, Vote>>
   private votes: Map<string, Map<string, any>> = new Map();
+  // Map<height, Block> - stores validated block proposals
+  private validatedProposals: Map<number, Block> = new Map();
 
   async start(port: number, bootstrapPeers: string[] = []) {
     this.node = await createLibp2p({
@@ -82,6 +86,24 @@ export class P2P {
         let height = decoded.height;
         if (topic === 'block:proposal' && decoded.header) {
           height = decoded.header.height;
+          
+          // Validate block proposal
+          try {
+            const expectedHeight = this.headHeight + 1;
+            validateBlockProposal(decoded, expectedHeight, this.prevHash);
+            
+            // Store validated proposal
+            this.validatedProposals.set(height, decoded);
+            console.log(`[P2P] Validated block proposal from ${peerId}: height ${height}`);
+          } catch (validationErr) {
+            if (validationErr instanceof ValidationError) {
+              console.warn(`[P2P] Invalid block proposal from ${peerId} at height ${height}: ${validationErr.message}`);
+            } else {
+              console.error(`[P2P] Error validating block proposal from ${peerId}:`, validationErr);
+            }
+            // Don't process invalid proposals
+            return;
+          }
         }
 
         if (['block:proposal', 'vote:prevote', 'vote:precommit'].includes(topic)) {
@@ -172,6 +194,28 @@ export class P2P {
         this.votes.delete(key);
       }
     }
+    // Clean up old validated proposals
+    for (const height of this.validatedProposals.keys()) {
+      if (height <= h) {
+        this.validatedProposals.delete(height);
+      }
+    }
+  }
+
+  getHeadHeight(): number {
+    return this.headHeight;
+  }
+
+  getPrevHash(): string {
+    return this.prevHash;
+  }
+
+  /**
+   * Get a validated block proposal for a specific height, if available.
+   * Returns undefined if no validated proposal exists for that height.
+   */
+  getValidatedProposal(height: number): Block | undefined {
+    return this.validatedProposals.get(height);
   }
 
   getMultiaddrs(): string[] {

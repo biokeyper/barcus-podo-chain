@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { P2P } from './p2p.js';
 import * as libp2p from 'libp2p';
+import { ValidationError } from './validation.js';
 
 vi.mock('libp2p', () => ({
     createLibp2p: vi.fn(),
@@ -55,14 +56,61 @@ describe('P2P Gossip Logging & Broadcast', () => {
         it('should log incoming block:proposal messages', async () => {
             await p2p.start(7001);
             const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
+            
+            // Create a valid block proposal (height 1, prevHash is 0x0000... for initial state)
+            const validBlock = {
+                header: {
+                    height: 1,
+                    prevHash: '0x' + '0'.repeat(64),
+                    txRoot: '0x' + '0'.repeat(64),
+                    timestamp: Date.now(),
+                    proposer: 'validator1'
+                },
+                txs: [],
+                signature: 'sig'
+            };
+            
             handler({
                 detail: {
                     topic: 'block:proposal',
                     from: { toString: () => 'QmSender987654' },
-                    data: new TextEncoder().encode(JSON.stringify({ header: { height: 42 } }))
+                    data: new TextEncoder().encode(JSON.stringify(validBlock))
                 }
             });
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Incoming block:proposal from QmSender987654: height 42'));
+            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Incoming block:proposal from QmSender987654: height 1'));
+            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Validated block proposal from QmSender987654: height 1'));
+        });
+
+        it('should reject invalid block proposals', async () => {
+            await p2p.start(7001);
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+            
+            // Create an invalid block proposal (missing prevHash)
+            const invalidBlock = {
+                header: {
+                    height: 1,
+                    // missing prevHash
+                    txRoot: '0x' + '0'.repeat(64),
+                    timestamp: Date.now(),
+                    proposer: 'validator1'
+                },
+                txs: [],
+                signature: 'sig'
+            };
+            
+            handler({
+                detail: {
+                    topic: 'block:proposal',
+                    from: { toString: () => 'QmSender987654' },
+                    data: new TextEncoder().encode(JSON.stringify(invalidBlock))
+                }
+            });
+            
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Invalid block proposal from QmSender987654 at height 1'));
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid header.prevHash'));
+            
+            warnSpy.mockRestore();
         });
 
         it('should log incoming vote:prevote messages', async () => {
