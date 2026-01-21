@@ -8,7 +8,7 @@ Minimal backbone for **Barcus**, a Proof of Data Ownership (PoDO) blockchain: li
 
 Make sure you have the following installed:
 
-- **Node.js >= 18**  
+- **Node.js >= 22** (required for `Promise.withResolvers`)  
   ```bash
   sudo apt update
   sudo apt install -y nodejs npm
@@ -179,7 +179,7 @@ make devnet
 
 Expected output:
 ```
-Devnet running. RPC: http://localhost:8545 | http://localhost:8546
+Devnet running. RPC: http://localhost:8545 (node1) | http://localhost:8546 (node2) | http://localhost:8547 (node3)
 Hardhat JSON-RPC: http://127.0.0.1:8545
 ```
 
@@ -228,11 +228,13 @@ Consensus is reached when ≥2/3 validators send precommits for the same block.
 
 ## 🌐 Multi‑Node Scaling
 
-To add Node 3:
+## 🌐 Multi‑Node Scaling
+
+The default devnet runs 3 nodes. To add **Node 4**:
 
 ```bash
 BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/<NODE1_ID>" \
-NODE_ID=node3 P2P_PORT=7003 RPC_PORT=8547 VALIDATOR_ADDR=val3 npm start
+NODE_ID=node4 P2P_PORT=7004 RPC_PORT=8548 VALIDATOR_ADDR=val4 npm start
 ```
 
 You’ll see:
@@ -259,6 +261,17 @@ Use `VALIDATOR_ADDR` or CLI flags to set role.
 - Chain state stored in `./data/<NODE_ID>` via LevelDB.  
 - Snapshots can be taken after each commit.  
 - `make clean` wipes state for a fresh devnet.
+
+
+---
+
+## 🛠️ Helper Scripts
+
+Located in `chain/scripts/`, these help with node operations:
+
+- `start-node3.sh`: Quickly start node 3 connecting to node 1.
+- `get-peer-id.js`: Fetch peer ID from a running node.
+- `test-node3-gossip.js`: Verify gossip propagation.
 
 ---
 
@@ -295,14 +308,14 @@ Future enhancements:
 |   Node 1 (val1)   |<----->|   Node 2 (val2)   |
 | RPC:8545, P2P:7001|       | RPC:8546, P2P:7002|
 +-------------------+       +-------------------+
-         ^                         ^
-         |                         |
-         +-----------+-------------+
-                     |
-             +-------------------+
-             |   Node 3 (val3)   |
-             | RPC:8547, P2P:7003|
-             +-------------------+
+         ^    ^                    ^
+         |    |                    |
+         |    +-----------+--------+
+         |                |
+ +-------------------+    |
+ |   Node 3 (val3)   |<---+
+ | RPC:8547, P2P:7003|
+ +-------------------+
 ```
 
 Nodes gossip proposals/votes via libp2p, persist state in LevelDB, and expose JSON‑RPC for clients. Contracts run on Hardhat.

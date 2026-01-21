@@ -63,5 +63,64 @@ jobs:
     
     - name: Check if Hardhat compiles
       working-directory: ./contracts
-      run: npx hardhat compile
-      continue-on-error: true
+
+  test-docker-build:
+    name: Verify Docker Build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Build Node Image
+      run: docker build -f docker/node.Dockerfile .
+
+  e2e-simulation:
+    name: E2E 3-Node Simulation
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js 22.21.1
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22.21.1
+        cache: 'npm'
+        cache-dependency-path: chain/package-lock.json
+
+    - name: Install dependencies
+      working-directory: ./chain
+      run: npm ci
+
+    - name: Start Devnet (3 Nodes)
+      run: |
+        npm install -g typescript ts-node
+        make devnet
+      # make devnet runs 'docker compose up -d'
+
+    - name: Wait for Network Stabilization
+      run: sleep 15
+
+    - name: Extract Node 1 Peer ID
+      id: get-peer-id
+      run: |
+        # Get logs from node1
+        LOGS=$(docker compose -f docker/docker-compose.yml logs node1)
+        # Extract Peer ID (assumes log format "[P2P] Peer ID: <ID>")
+        # We look for the line, get the last word (or 4th word)
+        PEER_ID=$(echo "$LOGS" | grep "Peer ID:" | head -n 1 | awk '{print $4}')
+        echo "Found Peer ID: $PEER_ID"
+        echo "peer_id=$PEER_ID" >> $GITHUB_OUTPUT
+
+    - name: Run Gossip Verification
+      working-directory: ./chain
+      run: |
+        # Build chain code first (needed for script imports usually, or use ts-node)
+        npm run build
+        # Run verification script connecting to Node 1
+        # Node 1 is at 127.0.0.1:7001
+        PEER_ID=${{ steps.get-peer-id.outputs.peer_id }}
+        MULTIADDR="/ip4/127.0.0.1/tcp/7001/p2p/$PEER_ID"
+        echo "Connecting to $MULTIADDR"
+        node scripts/test-node3-gossip.js "$MULTIADDR"
+
