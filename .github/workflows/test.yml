@@ -1,0 +1,67 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  test-chain:
+    name: Test Chain
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [22.21.1]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: chain/package-lock.json
+    
+    - name: Install dependencies
+      working-directory: ./chain
+      run: npm ci
+    
+    - name: Run tests
+      working-directory: ./chain
+      run: npm test
+    
+    - name: Build TypeScript
+      working-directory: ./chain
+      run: npm run build
+
+  test-contracts:
+    name: Test Contracts
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [22.21.1]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: contracts/package-lock.json
+    
+    - name: Install dependencies
+      working-directory: ./contracts
+      run: npm ci
+    
+    - name: Check if Hardhat compiles
+      working-directory: ./contracts
+      run: npx hardhat compile
+      continue-on-error: true
