@@ -1,7 +1,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { State, applyTx } from './state.js';
-import { Block, Transaction } from './types.js';
+import { Block, Tx } from './types.js';
 import fs from 'fs';
 
 // Mock LevelDB
@@ -37,7 +37,7 @@ describe('State', () => {
     });
 
     it('should apply transaction correctly', async () => {
-        const tx: Transaction = {
+        const tx: Tx = {
             from: 'addr1',
             nonce: 0,
             type: 'DATA_REGISTER',
