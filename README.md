@@ -57,7 +57,8 @@ make devnet
 
 - **Chain Node 1 JSON-RPC:** http://localhost:8545  
 - **Chain Node 2 JSON-RPC:** http://localhost:8546  
-- **Hardhat local chain:** [http://127.0.0.1:8545](http://127.0.0.1:8545)  
+- **Chain Node 3 JSON-RPC:** http://localhost:8547  
+- **Hardhat (if running separately):** http://localhost:8555 _(not started by default)_  
 
 ---
 
@@ -113,7 +114,7 @@ make clean
 
 ```bash
 cd contracts
-npx hardhat node
+npm run node
 npx hardhat run scripts/deploy.ts --network localhost
 ```
 
@@ -129,25 +130,33 @@ npx hardhat run scripts/deploy.ts --network localhost
 - **Run tests (chain):**  
   ```bash
   cd chain
-  npm test
-  ```
-- **Run tests (contracts):**  
-  ```bash
-  cd contracts
-  npx hardhat test
-  ```
-- **Lint code:**  
-  ```bash
-  npm run lint
-  ```
+  npm test  # ~35-40 seconds total (includes 20s+ integration tests)
+  ```  
+  _Note: Tests use FloodSub for reliable multi-node message propagation_
 
 ---
 
 ## 🩺 Troubleshooting
 
 - **Missing build tools:** LevelDB requires C++ compilation.  
-- **Port conflicts:** Ensure `8545/8546` (RPC) and `7001/7002` (P2P) are free.  
-- **Libp2p/Level errors:** See `[Looks like the result wasn't safe to show. Let's switch things up and try something else!]`.
+- **Port conflicts:** Ensure `8545/8546/8547` (RPC) and `7001/7002/7003` (P2P) are free.  
+- **Libp2p/Level errors:** Ensure Node.js >= 22 is installed.
+- **Local connection only**: Nodes bind to `127.0.0.1` by default for local testing. To allow external connections (e.g., Docker), change the listen address in `chain/src/p2p.ts` from `127.0.0.1` to `0.0.0.0`.
+
+---
+
+## ⚠️ Known Issues
+
+- **P2P Implementation:** Currently using FloodSub instead of GossipSub for reliable message propagation in devnet/tests. This floods all messages to all connected peers rather than using a gossip mesh.
+  - **Why:** GossipSub mesh formation can take 10-30 seconds in test environments
+  - **Production note:** Consider switching back to GossipSub for larger networks
+  
+- **Multi-node mesh formation:** After starting a new node, allow 5-10 seconds for FloodSub subscriptions to propagate before expecting full message delivery.
+
+- **Test duration:** Integration tests (`p2p.integration.test.ts`) take ~20 seconds due to connection establishment and message exchange delays.
+
+- **Block Height Sync:** Currently, nodes must start at the same block height to reach consensus. If a node joins a network that has already progressed to a higher block height, it will fail to validate proposals due to height mismatches and cannot catch up automatically.
+  - **TODO:** Implement a state synchronization mechanism where late-joining nodes can request historical blocks/state from peers to catch up to the current network height.
 
 ---
 
@@ -180,7 +189,7 @@ make devnet
 Expected output:
 ```
 Devnet running. RPC: http://localhost:8545 (node1) | http://localhost:8546 (node2) | http://localhost:8547 (node3)
-Hardhat JSON-RPC: http://127.0.0.1:8545
+Hardhat JSON-RPC: http://127.0.0.1:8555
 ```
 
 ### Option B: Run locally
@@ -217,9 +226,10 @@ Barcus uses a **naive BFT loop** with three gossip topics:
 
 **Expected logs (inbound):**
 ```
-[P2P] Incoming block:proposal from Qm123456: height 1
-[P2P] Incoming vote:prevote from Qm123456: height 1
-[P2P] Incoming vote:precommit from Qm123456: height 1
+[P2P] Incoming block:proposal from 12D3KooW...: height 1
+[P2P] Validated block proposal from 12D3KooW...: height 1
+[P2P] Incoming vote:prevote from 12D3KooW...: height 1
+[P2P] Incoming vote:precommit from 12D3KooW...: height 1
 ```
 
 Consensus is reached when ≥2/3 validators send precommits for the same block.
@@ -237,10 +247,13 @@ BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/<NODE1_ID>" \
 NODE_ID=node4 P2P_PORT=7004 RPC_PORT=8548 VALIDATOR_ADDR=val4 npm start
 ```
 
-You’ll see:
+You'll see subscription changes as the node discovers the existing network:
 ```
-[P2P] Published message on block:proposal to 2 peers.
+[P2P] Subscription change for peer 12D3KooW...: block:proposal, vote:prevote, vote:precommit
+[P2P] Connected to peer: 12D3KooW
 ```
+
+> **Note:** Allow 5-10 seconds after node startup for FloodSub subscriptions to fully propagate before expecting all nodes to receive messages.
 
 ---
 

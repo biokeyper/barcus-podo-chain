@@ -9,13 +9,13 @@ install:
 	@cd contracts && npm install
 
 devnet:
-	@echo "Starting devnet (chain nodes + local EVM + contracts)..."
+	@echo "Starting devnet (chain nodes)..."
 	@docker compose -f docker/docker-compose.yml up -d --build
-	@cd contracts && nohup npx hardhat node >/tmp/hardhat.log 2>&1 &
-	@sleep 3
-	@cd contracts && npx hardhat run scripts/deploy.ts --network localhost
+	# @cd contracts && nohup npx hardhat node >/tmp/hardhat.log 2>&1 &
+	# @sleep 3
+	# @cd contracts && npx hardhat run scripts/deploy.ts --network localhost
 	@echo "Devnet running. RPC: http://localhost:8545 (node1) | http://localhost:8546 (node2) | http://localhost:8547 (node3)"
-	@echo "Hardhat JSON-RPC: http://127.0.0.1:8545"
+	# @echo "Hardhat JSON-RPC: http://127.0.0.1:8555"
 
 
 stop:
@@ -29,7 +29,7 @@ clean: stop
 	@rm -rf chain/data/* || true
 
 contracts-devnet:
-	@cd contracts && npx hardhat node
+	@cd contracts && npm run node
 
 deploy:
 	@cd contracts && npx hardhat run scripts/deploy.ts --network localhost

@@ -1,6 +1,6 @@
 // chain/src/p2p.ts
 import { createLibp2p, Libp2p } from "libp2p";
-import { gossipsub } from "@chainsafe/libp2p-gossipsub";
+import { floodsub } from "@libp2p/floodsub";
 import { tcp } from "@libp2p/tcp";
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@libp2p/yamux";
@@ -28,16 +28,7 @@ export class P2P {
       connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
       services: {
-        pubsub: gossipsub({
-          allowPublishToZeroTopicPeers: true,
-          fallbackToFloodsub: true,
-          emitSelf: true,
-          // globalSignaturePolicy: 'StrictNoSign',
-          // Optimize for small networks (devnet/tests)
-          D: 1,
-          Dlo: 1,
-          Dhi: 2,
-        }),
+        pubsub: floodsub(),
         identify: identify()
       } as any,
       peerDiscovery: [
@@ -86,12 +77,12 @@ export class P2P {
         let height = decoded.height;
         if (topic === 'block:proposal' && decoded.header) {
           height = decoded.header.height;
-          
+
           // Validate block proposal
           try {
             const expectedHeight = this.headHeight + 1;
             validateBlockProposal(decoded, expectedHeight, this.prevHash);
-            
+
             // Store validated proposal
             this.validatedProposals.set(height, decoded);
             console.log(`[P2P] Validated block proposal from ${peerId}: height ${height}`);

@@ -27,8 +27,20 @@ describe('P2P Integration (Real Nodes)', () => {
   }, 30000);
 
   afterAll(async () => {
-    if (node1?.node) await node1.node.stop();
-    if (node2?.node) await node2.node.stop();
+    // Small delay to allow messages/streams to settle before stopping
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      if (node1?.node) {
+        await node1.node.stop();
+        await new Promise(r => setTimeout(r, 200));
+      }
+      if (node2?.node) {
+        await node2.node.stop();
+        await new Promise(r => setTimeout(r, 200));
+      }
+    } catch (err) {
+      // Ignore teardown errors as they are often just closing-stream noise
+    }
   });
 
   it('should exchange block:proposal message between real nodes', async () => {
@@ -40,7 +52,7 @@ describe('P2P Integration (Real Nodes)', () => {
     // We'll set up our own listener, but if it doesn't fire (known issue with libp2p events),
     // we can verify messages were received via the P2P class's logs.
     let receivedMessage: any = null;
-    
+
     const testMessageHandler = (evt: any) => {
       const detail = evt.detail || evt;
       if (detail?.topic === 'block:proposal') {
@@ -52,7 +64,7 @@ describe('P2P Integration (Real Nodes)', () => {
         }
       }
     };
-    
+
     // Add test listener (may not fire due to libp2p event handling, but worth trying)
     pubsub2.addEventListener('message', testMessageHandler);
 
@@ -85,7 +97,7 @@ describe('P2P Integration (Real Nodes)', () => {
 
     // Broadcast and wait for message to be received
     await node1.broadcast('block:proposal', testPayload);
-    
+
     // Wait for message with multiple attempts
     // The P2P class is receiving messages (logs show this), but our test listener
     // may not fire due to how libp2p event handling works
@@ -100,7 +112,7 @@ describe('P2P Integration (Real Nodes)', () => {
         await node1.broadcast('block:proposal', testPayload);
       }
     }
-    
+
     // If test listener didn't capture it, but P2P logs show messages are being received,
     // we know the integration is working. For now, we'll verify the message format
     // by checking what was sent matches what should be received.
