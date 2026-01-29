@@ -9,9 +9,9 @@ describe('P2P Integration (Real Nodes)', () => {
     node1 = new P2P();
     node2 = new P2P();
 
-    await node1.start(7001);
+    await node1.start(7001, [], undefined, { enableMdns: false });
     const node1Addrs = node1.getMultiaddrs();
-    await node2.start(7002, node1Addrs);
+    await node2.start(7002, node1Addrs, undefined, { enableMdns: false });
 
     // Wait for libp2p connection
     let connected = false;

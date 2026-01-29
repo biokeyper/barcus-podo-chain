@@ -52,6 +52,23 @@ export class State {
     await this.db.put(`blk:${block.header.height}`, JSON.stringify(block));
     await this.db.put("head", String(block.header.height));
   }
+
+  async getBlock(height: number): Promise<Block | undefined> {
+    try {
+      const v = await this.db.get(`blk:${height}`);
+      return JSON.parse(v);
+    } catch {
+      return undefined;
+    }
+  }
+
+  async getHead(): Promise<number> {
+    try {
+      return Number(await this.db.get("head"));
+    } catch {
+      return 0;
+    }
+  }
 }
 
 export async function applyTx(s: State, tx: Tx): Promise<void> {

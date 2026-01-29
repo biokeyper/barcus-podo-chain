@@ -13,16 +13,16 @@ describe('P2P Bootstrap & Gossip (3 Nodes)', () => {
         node3 = new P2P();
 
         // Start Node 1 (Bootstrap Node)
-        await node1.start(8001);
+        await node1.start(8001, [], undefined, { enableMdns: false });
         const node1Addrs = node1.getMultiaddrs();
 
         // Start Node 2 (Bootstrap from Node 1)
-        await node2.start(8002, node1Addrs);
+        await node2.start(8002, node1Addrs, undefined, { enableMdns: false });
         const node2Addrs = node2.getMultiaddrs();
 
         // Start Node 3 (Bootstrap from Node 1 AND Node 2)
         // This tests the multi-bootstrap capability
-        await node3.start(8003, [...node1Addrs, ...node2Addrs]);
+        await node3.start(8003, [...node1Addrs, ...node2Addrs], undefined, { enableMdns: false });
 
         // Wait for mesh to form
         console.log('[Test] Waiting for mesh formation...');

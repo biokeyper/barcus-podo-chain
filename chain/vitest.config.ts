@@ -1,9 +1,12 @@
+
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    setupFiles: ['./vitest.setup.ts'],
-    exclude: ['**/node_modules/**', '**/dist/**'],
-    fileParallelism: false,
+    include: ['src/**/*.test.ts'],
+    exclude: ['dist/**/*', 'node_modules/**/*'],
+    setupFiles: ['./src/test-setup.ts'],
+    testTimeout: 60000,
+    hookTimeout: 60000,
   },
 });

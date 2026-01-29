@@ -13,6 +13,17 @@ The node is composed of several modular components:
 - **State (`src/state.ts`)**: Manages the persistent blockchain state using LevelDB. It tracks balances and registered datasets.
 - **Mempool (`src/mempool.ts`)**: Buffers incoming transactions before they are proposed in a block.
 - **RPC (`src/rpc.ts`)**: Provides a JSON-RPC 2.0 interface for interacting with the node.
+- **Synchronization (`src/p2p.ts` & `src/consensus.ts`)**: Implements a request/response block sync protocol (`/barcus/sync/1.0.0`) to help nodes catch up to the network height.
+
+---
+
+## 🔄 Synchronization
+
+The node features an automated synchronization mechanism:
+1. **Detection**: Upon receiving gossip messages (e.g., block proposals), the node compares its local head height with the message's height.
+2. **Sync Trigger**: If the network is ahead, the `Consensus` loop triggers a `sync()` call.
+3. **Peer Retrieval**: The node iterates through connected peers and requests missing blocks by height using a dedicated libp2p protocol.
+4. **Validation & Commit**: Each retrieved block is validated against the previous hash, its transactions are applied to the state, and it is persisted to LevelDB.
 
 ---
 
@@ -42,14 +53,41 @@ The node is configured via environment variables:
 npm install
 ```
 
-### Start a Node
-```bash
-# Start Node 1
-NODE_ID=node1 P2P_PORT=7001 RPC_PORT=8545 VALIDATOR_ADDR=val1 npm start
+### Running a Local Cluster (4 Nodes)
 
-# Start Node 2 (using Node 1's multiaddr as bootstrap)
-BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/PEER_ID_HERE" \
-NODE_ID=node2 P2P_PORT=7002 RPC_PORT=8546 VALIDATOR_ADDR=val2 npm start
+The consensus logic expects 4 validators (`val1`, `val2`, `val3`, `val4`). You can run them manually or via Docker.
+
+#### Option 1: Manual (Multiple Terminals)
+
+1. **Terminal 1 (Node 1 - Bootstrap)**:
+   ```bash
+   NODE_ID=node1 P2P_PORT=7001 RPC_PORT=8545 VALIDATOR_ADDR=val1 npm start
+   ```
+   *Note: Observe the Peer ID printed by Node 1 (e.g., `12D3KooWN...`).*
+
+2. **Terminal 2 (Node 2)**:
+   ```bash
+   BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/PEER_ID_OF_NODE1" \
+   NODE_ID=node2 P2P_PORT=7002 RPC_PORT=8546 VALIDATOR_ADDR=val2 npm start
+   ```
+
+3. **Terminal 3 (Node 3)**:
+   ```bash
+   BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/PEER_ID_OF_NODE1" \
+   NODE_ID=node3 P2P_PORT=7003 RPC_PORT=8547 VALIDATOR_ADDR=val3 npm start
+   ```
+
+4. **Terminal 4 (Node 4)**:
+   ```bash
+   BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/PEER_ID_OF_NODE1" \
+   NODE_ID=node4 P2P_PORT=7004 RPC_PORT=8548 VALIDATOR_ADDR=val4 npm start
+   ```
+
+#### Option 2: Docker Compose
+
+You can start a pre-configured 4-node cluster from the root directory:
+```bash
+make devnet
 ```
 
 ---
