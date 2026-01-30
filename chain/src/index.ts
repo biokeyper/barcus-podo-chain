@@ -17,23 +17,23 @@ const BOOTSTRAP_PEERS = process.env.BOOTSTRAP_PEERS || '';
   const state = new State(DATA_DIR);
   const mem = new Mempool();
   const p2p = new P2P();
-  
+
   // Parse bootstrap peers from environment (comma-separated multiaddrs)
-  const bootstrapPeers: string[] = BOOTSTRAP_PEERS 
+  const bootstrapPeers: string[] = BOOTSTRAP_PEERS
     ? BOOTSTRAP_PEERS.split(',').map(p => p.trim()).filter(p => p.length > 0)
     : [];
-  
-  await p2p.start(P2P_PORT, bootstrapPeers);
+
+  await p2p.start(P2P_PORT, bootstrapPeers, state);
 
   const validators = ['val1', 'val2', 'val3', 'val4'];
   const me = VALIDATOR_ADDR;
 
   const cons = new Consensus(state, mem, p2p, validators, me);
   startRpc(mem, state, RPC_PORT);
-  
+
   // Wait for network to stabilize before starting consensus
   console.log(`[${NODE_ID}] waiting for network to stabilize...`);
   await new Promise(resolve => setTimeout(resolve, 10000));
-  
+
   await cons.run();
 })();

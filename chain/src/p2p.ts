@@ -8,7 +8,12 @@ import { mdns } from "@libp2p/mdns";
 import { bootstrap } from "@libp2p/bootstrap";
 import { identify } from "@libp2p/identify";
 import { multiaddr } from "@multiformats/multiaddr";
+import { peerIdFromString } from "@libp2p/peer-id";
+import { pipe } from "it-pipe";
+import * as lp from "it-length-prefixed";
 import { Block } from "./types.js";
+import { hashBlock } from "./block.js";
+import { State } from "./state.js";
 import { validateBlockProposal, ValidationError } from "./validation.js";
 
 export class P2P {
@@ -20,8 +25,22 @@ export class P2P {
   private votes: Map<string, Map<string, any>> = new Map();
   // Map<height, Block> - stores validated block proposals
   private validatedProposals: Map<number, Block> = new Map();
+  private state?: State;
+  private networkHeight = 0;
+  private stopping = false;
 
-  async start(port: number, bootstrapPeers: string[] = []) {
+  async start(port: number, bootstrapPeers: string[] = [], state?: State, options: { enableMdns?: boolean } = {}) {
+    const { enableMdns = true } = options;
+    this.state = state;
+    if (this.state) {
+      this.headHeight = await this.state.getHead();
+      const lastBlock = await this.state.getBlock(this.headHeight);
+      if (lastBlock) {
+        this.prevHash = hashBlock(lastBlock);
+        console.log(`[P2P] Resuming from height ${this.headHeight}, head hash: ${this.prevHash}`);
+      }
+    }
+
     this.node = await createLibp2p({
       addresses: { listen: [`/ip4/0.0.0.0/tcp/${port}`] },
       transports: [tcp()],
@@ -32,8 +51,8 @@ export class P2P {
         identify: identify()
       } as any,
       peerDiscovery: [
-        mdns(),
-        ...(bootstrapPeers.length > 0 ? [bootstrap({ list: bootstrapPeers })] : [])
+        ...(enableMdns ? [mdns()] : []),
+        ...(bootstrapPeers.length > 0 ? [bootstrap({ list: bootstrapPeers.map(p => multiaddr(p).toString()) })] : [])
       ],
       connectionManager: {
         maxConnections: 100
@@ -77,6 +96,14 @@ export class P2P {
         let height = decoded.height;
         if (topic === 'block:proposal' && decoded.header) {
           height = decoded.header.height;
+        }
+
+        if (height && height > this.networkHeight) {
+          this.networkHeight = height;
+        }
+
+        if (topic === 'block:proposal' && decoded.header) {
+          height = decoded.header.height;
 
           // Validate block proposal
           try {
@@ -117,9 +144,6 @@ export class P2P {
       console.log(`[P2P] Subscription change for peer ${peerId.toString()}: ${subscriptions.map((s: any) => s.topic).join(', ')}`);
     });
 
-    console.log(`[P2P] Peer ID: ${this.node.peerId.toString()}`);
-    console.log(`[P2P] Node listening on port ${port}`);
-
     // Manual initial dial for bootstrap peers to ensure immediate connection
     if (bootstrapPeers.length > 0) {
       for (const peerAddr of bootstrapPeers) {
@@ -129,9 +153,53 @@ export class P2P {
         } catch (err) { }
       }
     }
+
+    // Register sync handler
+    this.node.handle('/barcus/sync/1.0.0', async (data: any) => {
+      if (this.stopping) return;
+      const stream = data.stream || data;
+      const self = this;
+
+      try {
+        const decodedSource = lp.decode(stream);
+        for await (const msg of decodedSource) {
+          if (self.stopping) break;
+          const reqStr = new TextDecoder().decode(msg.subarray());
+          const req = JSON.parse(reqStr);
+          const height = req.height;
+          if (self.state) {
+            const block = await self.state.getBlock(height);
+            if (block) {
+              const encoded = lp.encode([new TextEncoder().encode(JSON.stringify(block))]);
+              for await (const chunk of encoded) {
+                if (self.stopping) break;
+                stream.send(chunk.subarray());
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        // Only log errors that are not expected during normal operation
+        const ignoredErrors = ['StreamClosedError', 'StreamResetError', 'StreamStateError', 'InvalidStateError'];
+        if (!ignoredErrors.includes(err.name)) {
+          console.error('[P2P] Sync stream error:', err);
+        }
+      }
+    });
+
+    console.log(`[P2P] Peer ID: ${this.node.peerId.toString()}`);
+    console.log(`[P2P] Node listening on port ${port}`);
+  }
+
+  async stop() {
+    this.stopping = true;
+    if (this.node) {
+      await this.node.stop();
+    }
   }
 
   async broadcast(topic: string, data: any) {
+    if (this.stopping) return;
     const pubsub = (this.node.services as any).pubsub;
     if (!pubsub) return;
 
@@ -197,6 +265,10 @@ export class P2P {
     return this.headHeight;
   }
 
+  getNetworkHeight(): number {
+    return this.networkHeight;
+  }
+
   getPrevHash(): string {
     return this.prevHash;
   }
@@ -212,5 +284,36 @@ export class P2P {
   getMultiaddrs(): string[] {
     const peerId = this.node.peerId.toString();
     return this.node.getMultiaddrs().map(ma => `${ma.toString()}/p2p/${peerId}`);
+  }
+
+  async requestBlockFromPeer(peerId: string, height: number): Promise<Block | undefined> {
+    if (this.stopping) return undefined;
+    console.log(`[P2P] Requesting block ${height} from ${peerId.slice(0, 8)}...`);
+    try {
+      const stream = await this.node.dialProtocol(peerIdFromString(peerId), '/barcus/sync/1.0.0') as any;
+
+      // Send request
+      const request = [new TextEncoder().encode(JSON.stringify({ height }))];
+      const encoded = lp.encode(request);
+      for await (const chunk of encoded) {
+        stream.send(chunk.subarray());
+      }
+
+      // Read response
+      const decodedSource = lp.decode(stream);
+      for await (const msg of decodedSource) {
+        const res = new TextDecoder().decode(msg.subarray());
+        if (res) {
+          return JSON.parse(res);
+        }
+        break;
+      }
+    } catch (err: any) {
+      const ignoredErrors = ['StreamClosedError', 'StreamResetError', 'StreamStateError', 'InvalidStateError'];
+      if (!ignoredErrors.includes(err.name)) {
+        console.error(`[P2P] Error requesting block ${height} from ${peerId}:`, err);
+      }
+    }
+    return undefined;
   }
 }

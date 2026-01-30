@@ -32,6 +32,8 @@ describe('P2P Gossip Logging & Broadcast', () => {
             getPeers: () => ['QmPeerX'],
             addEventListener: vi.fn(),
             dial: vi.fn().mockResolvedValue(undefined),
+            handle: vi.fn(),
+            dialProtocol: vi.fn(),
         };
 
         (libp2p.createLibp2p as any).mockResolvedValue(mockNode);
@@ -56,7 +58,7 @@ describe('P2P Gossip Logging & Broadcast', () => {
         it('should log incoming block:proposal messages', async () => {
             await p2p.start(7001);
             const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
-            
+
             // Create a valid block proposal (height 1, prevHash is 0x0000... for initial state)
             const validBlock = {
                 header: {
@@ -69,7 +71,7 @@ describe('P2P Gossip Logging & Broadcast', () => {
                 txs: [],
                 signature: 'sig'
             };
-            
+
             handler({
                 detail: {
                     topic: 'block:proposal',
@@ -85,7 +87,7 @@ describe('P2P Gossip Logging & Broadcast', () => {
             await p2p.start(7001);
             const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
             const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
-            
+
             // Create an invalid block proposal (missing prevHash)
             const invalidBlock = {
                 header: {
@@ -98,7 +100,7 @@ describe('P2P Gossip Logging & Broadcast', () => {
                 txs: [],
                 signature: 'sig'
             };
-            
+
             handler({
                 detail: {
                     topic: 'block:proposal',
@@ -106,10 +108,10 @@ describe('P2P Gossip Logging & Broadcast', () => {
                     data: new TextEncoder().encode(JSON.stringify(invalidBlock))
                 }
             });
-            
+
             expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Invalid block proposal from QmSender987654 at height 1'));
             expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid header.prevHash'));
-            
+
             warnSpy.mockRestore();
         });
 

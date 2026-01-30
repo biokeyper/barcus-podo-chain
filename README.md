@@ -58,6 +58,7 @@ make devnet
 - **Chain Node 1 JSON-RPC:** http://localhost:8545  
 - **Chain Node 2 JSON-RPC:** http://localhost:8546  
 - **Chain Node 3 JSON-RPC:** http://localhost:8547  
+- **Chain Node 4 JSON-RPC:** http://localhost:8548  
 - **Hardhat (if running separately):** http://localhost:8555 _(not started by default)_  
 
 ---
@@ -130,9 +131,9 @@ npx hardhat run scripts/deploy.ts --network localhost
 - **Run tests (chain):**  
   ```bash
   cd chain
-  npm test  # ~35-40 seconds total (includes 20s+ integration tests)
+  npm test  # ~15 seconds total
   ```  
-  _Note: Tests use FloodSub for reliable multi-node message propagation_
+  _Note: Tests use stability patches (graceful shutdown) to ensure clean execution._
 
 ---
 
@@ -147,16 +148,16 @@ npx hardhat run scripts/deploy.ts --network localhost
 
 ## ⚠️ Known Issues
 
-- **P2P Implementation:** Currently using FloodSub instead of GossipSub for reliable message propagation in devnet/tests. This floods all messages to all connected peers rather than using a gossip mesh.
-  - **Why:** GossipSub mesh formation can take 10-30 seconds in test environments
-  - **Production note:** Consider switching back to GossipSub for larger networks
+- **P2P Implementation:** Currently using FloodSub for reliably simplified message propagation in devnet/tests.
+  - **Stability:** Integration tests include automated teardown and error filtering to prevent `StreamStateError` during rapid node recycling.
   
-- **Multi-node mesh formation:** After starting a new node, allow 5-10 seconds for FloodSub subscriptions to propagate before expecting full message delivery.
+- **GossipSub Latency:** In very small networks (3-4 nodes), GossipSub mesh formation can take 10-30 seconds. Devnet defaults to aggressive peer discovery to minimize this.
 
-- **Test duration:** Integration tests (`p2p.integration.test.ts`) take ~20 seconds due to connection establishment and message exchange delays.
+---
 
-- **Block Height Sync:** Currently, nodes must start at the same block height to reach consensus. If a node joins a network that has already progressed to a higher block height, it will fail to validate proposals due to height mismatches and cannot catch up automatically.
-  - **TODO:** Implement a state synchronization mechanism where late-joining nodes can request historical blocks/state from peers to catch up to the current network height.
+## 🔄 Synchronization
+
+- **Block Synchronization:** Late-joining nodes automatically detect when they are behind the network height and trigger a catch-up process. They request historical blocks from peers using the `/barcus/sync/1.0.0` protocol to sync their local state before joining the BFT consensus loop.
 
 ---
 

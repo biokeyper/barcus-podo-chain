@@ -47,9 +47,26 @@ services:
       - "7003:7003"
     volumes:
       - node3:/app/data
+  node4:
+    build:
+      context: ..
+      dockerfile: docker/node.Dockerfile
+    environment:
+      - NODE_ID=node4
+      - RPC_PORT=8545
+      - P2P_PORT=7004
+      - VALIDATOR_ADDR=val4
+      - DATA_DIR=/app/data/node4
+    ports:
+      - "8548:8545"
+      - "7004:7004"
+    volumes:
+      - node4:/app/data
     depends_on:
       - node1
+
 volumes:
   node1:
   node2:
   node3:
+  node4:
