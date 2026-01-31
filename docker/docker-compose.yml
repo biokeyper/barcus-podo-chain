@@ -30,6 +30,43 @@ services:
       - "7002:7002"
     volumes:
       - node2:/app/data
+  node3:
+    build:
+      context: ..
+      dockerfile: docker/node.Dockerfile
+    environment:
+      - NODE_ID=node3
+      - RPC_PORT=8547
+      - P2P_PORT=7003
+      - VALIDATOR_ADDR=val3
+      - DATA_DIR=/app/data/node3
+      # Note: Update BOOTSTRAP_PEERS with actual Node 1 peer ID after Node 1 starts
+      # - BOOTSTRAP_PEERS=/ip4/node1/tcp/7001/p2p/NODE1_PEER_ID
+    ports:
+      - "8547:8545"
+      - "7003:7003"
+    volumes:
+      - node3:/app/data
+  node4:
+    build:
+      context: ..
+      dockerfile: docker/node.Dockerfile
+    environment:
+      - NODE_ID=node4
+      - RPC_PORT=8545
+      - P2P_PORT=7004
+      - VALIDATOR_ADDR=val4
+      - DATA_DIR=/app/data/node4
+    ports:
+      - "8548:8545"
+      - "7004:7004"
+    volumes:
+      - node4:/app/data
+    depends_on:
+      - node1
+
 volumes:
   node1:
   node2:
+  node3:
+  node4:

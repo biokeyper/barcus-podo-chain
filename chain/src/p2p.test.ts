@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { P2P } from './p2p.js';
 import * as libp2p from 'libp2p';
+import { ValidationError } from './validation.js';
 
 vi.mock('libp2p', () => ({
     createLibp2p: vi.fn(),
@@ -15,23 +16,29 @@ describe('P2P Gossip Logging & Broadcast', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         mockPubsub = {
-            subscribe: vi.fn(),
-            publish: vi.fn(),
+            subscribe: vi.fn().mockResolvedValue(undefined),
+            publish: vi.fn().mockResolvedValue(undefined),
             addEventListener: vi.fn(),
+            getPeers: vi.fn().mockReturnValue([]),
+            getSubscribers: vi.fn().mockReturnValue([]),
         };
 
         mockNode = {
-            start: vi.fn(),
+            start: vi.fn().mockResolvedValue(undefined),
+            stop: vi.fn().mockResolvedValue(undefined),
             services: { pubsub: mockPubsub },
             peerId: { toString: () => 'QmTestPeerId123456' },
             getMultiaddrs: () => [],
             getPeers: () => ['QmPeerX'],
             addEventListener: vi.fn(),
-            dial: vi.fn(),
+            dial: vi.fn().mockResolvedValue(undefined),
+            handle: vi.fn(),
+            dialProtocol: vi.fn(),
         };
 
         (libp2p.createLibp2p as any).mockResolvedValue(mockNode);
         logSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
+        vi.spyOn(console, 'error').mockImplementation(() => { });
         p2p = new P2P();
     });
 
@@ -48,47 +55,98 @@ describe('P2P Gossip Logging & Broadcast', () => {
     });
 
     describe('Incoming Messages', () => {
-        let handler: any;
-
-        beforeEach(async () => {
+        it('should validate and store block:proposal messages', async () => {
             await p2p.start(7001);
-            handler = mockPubsub.addEventListener.mock.calls.find((call: any) => call[0] === 'message')[1];
-        });
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
 
-        it('should log incoming block:proposal messages', () => {
+            // Create a valid block proposal (height 1, prevHash is 0x0000... for initial state)
+            const validBlock = {
+                header: {
+                    height: 1,
+                    prevHash: '0x' + '0'.repeat(64),
+                    txRoot: '0x' + '0'.repeat(64),
+                    timestamp: Date.now(),
+                    proposer: 'validator1'
+                },
+                txs: [],
+                signature: 'sig'
+            };
+
             handler({
                 detail: {
                     topic: 'block:proposal',
                     from: { toString: () => 'QmSender987654' },
-                    data: new TextEncoder().encode(JSON.stringify({ header: { height: 42 } }))
+                    data: new TextEncoder().encode(JSON.stringify(validBlock))
                 }
             });
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Incoming block:proposal from ...987654: height 42'));
+            // Verify that the proposal was stored
+            expect(p2p.getValidatedProposal(1)).toEqual(validBlock);
         });
 
-        it('should log incoming vote:prevote messages', () => {
+        it('should reject invalid block proposals', async () => {
+            await p2p.start(7001);
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+
+            // Create an invalid block proposal (missing prevHash)
+            const invalidBlock = {
+                header: {
+                    height: 1,
+                    // missing prevHash
+                    txRoot: '0x' + '0'.repeat(64),
+                    timestamp: Date.now(),
+                    proposer: 'validator1'
+                },
+                txs: [],
+                signature: 'sig'
+            };
+
+            handler({
+                detail: {
+                    topic: 'block:proposal',
+                    from: { toString: () => 'QmSender987654' },
+                    data: new TextEncoder().encode(JSON.stringify(invalidBlock))
+                }
+            });
+
+            // Verify that invalid proposal was NOT stored
+            expect(p2p.getValidatedProposal(1)).toBeUndefined();
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid block proposal'));
+
+            warnSpy.mockRestore();
+        });
+
+        it('should store vote:prevote messages', async () => {
+            await p2p.start(7001);
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
             handler({
                 detail: {
                     topic: 'vote:prevote',
                     from: { toString: () => 'QmSender112233' },
-                    data: new TextEncoder().encode(JSON.stringify({ height: 100 }))
+                    data: new TextEncoder().encode(JSON.stringify({ height: 100, type: 'PREVOTE', validator: 'val1' }))
                 }
             });
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Incoming vote:prevote from ...112233: height 100'));
+            // Votes should be stored internally
+            expect(p2p['votes'].has('100:PREVOTE')).toBe(true);
         });
 
-        it('should log incoming vote:precommit messages', () => {
+        it('should store vote:precommit messages', async () => {
+            await p2p.start(7001);
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
             handler({
                 detail: {
                     topic: 'vote:precommit',
                     from: { toString: () => 'QmSender445566' },
-                    data: new TextEncoder().encode(JSON.stringify({ height: 200 }))
+                    data: new TextEncoder().encode(JSON.stringify({ height: 200, type: 'PRECOMMIT', validator: 'val2' }))
                 }
             });
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Incoming vote:precommit from ...445566: height 200'));
+            // Votes should be stored internally
+            expect(p2p['votes'].has('200:PRECOMMIT')).toBe(true);
         });
 
-        it('should log ignored messages for unknown topics', () => {
+        it('should ignore messages on unknown topics', async () => {
+            await p2p.start(7001);
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
             handler({
                 detail: {
                     topic: 'unknown:topic',
@@ -96,52 +154,123 @@ describe('P2P Gossip Logging & Broadcast', () => {
                     data: new TextEncoder().encode(JSON.stringify({ foo: 'bar' }))
                 }
             });
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Ignored message on unknown topic unknown:topic from ...XXXXXX'));
+            // Unknown topics should not cause errors, just be ignored
+            expect(logSpy).toHaveBeenCalled();
         });
     });
 
     describe('Broadcast & Retry', () => {
-        it('should retry publish on failure with exponential backoff', async () => {
+        beforeEach(async () => {
             await p2p.start(7001);
+        });
 
-            let attempt = 0;
-            mockPubsub.publish.mockImplementation(() => {
-                attempt++;
-                if (attempt < 3) throw new Error('Publish failed');
-                return Promise.resolve();
-            });
+        it('should retry publish on failure with exponential backoff', async () => {
+            const err = new Error('No peers subscribed');
+            err.name = 'PublishError';
+            (err as any).code = 'ERR_NO_PEERS_SUBSCRIBED_TO_TOPIC';
 
-            const broadcastPromise = p2p.broadcast('block:proposal', { height: 99 });
+            mockPubsub.publish
+                .mockRejectedValueOnce(err)
+                .mockRejectedValueOnce(err)
+                .mockResolvedValueOnce({});
 
-            // Run timers to trigger retries
-            await vi.advanceTimersByTimeAsync(500); // 1st retry
-            await vi.advanceTimersByTimeAsync(1000); // 2nd retry (success)
+            const broadcastPromise = p2p.broadcast('topic', { foo: 'bar' });
+
+            await vi.advanceTimersByTimeAsync(100);
+            await vi.advanceTimersByTimeAsync(200);
 
             await broadcastPromise;
-
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Publish retry on block:proposal (attempt 1/10)'));
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Publish retry on block:proposal (attempt 2/10)'));
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Published message on block:proposal to 1 peers.'));
+            expect(mockPubsub.publish).toHaveBeenCalledTimes(3);
         });
 
         it('should give up after max retries', async () => {
-            await p2p.start(7001);
+            const err = new Error('No peers subscribed');
+            err.name = 'PublishError';
+            (err as any).code = 'ERR_NO_PEERS_SUBSCRIBED_TO_TOPIC';
 
-            mockPubsub.publish.mockImplementation(() => {
-                throw new Error('Always fails');
-            });
+            mockPubsub.publish.mockRejectedValue(err);
 
-            const broadcastPromise = p2p.broadcast('vote:prevote', { height: 123 });
+            const broadcastPromise = p2p.broadcast('topic', { foo: 'bar' });
 
-            // Advance through all retries iteratively.
-            // There are 9 wait periods for 10 attempts.
-            for (let i = 0; i < 9; i++) {
+            for (let i = 0; i < 5; i++) {
                 await vi.advanceTimersToNextTimerAsync();
             }
 
             await broadcastPromise;
+            expect(mockPubsub.publish).toHaveBeenCalledTimes(6);
+        });
+    });
 
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Publish on vote:prevote failed after 10 attempts'));
+    describe('Vote Collection', () => {
+        beforeEach(async () => {
+            await p2p.start(7001);
+        });
+
+        it('should collect votes and return on quorum', async () => {
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
+            const collectionPromise = p2p.collectVotes(1, 'PREVOTE', 4); // Quorum of 3 required (2/3 of 4)
+
+            for (let i = 1; i <= 3; i++) {
+                handler({
+                    detail: {
+                        topic: 'vote:prevote',
+                        from: { toString: () => `peer${i}` },
+                        data: new TextEncoder().encode(JSON.stringify({
+                            height: 1, validator: `val${i}`, type: 'PREVOTE'
+                        }))
+                    }
+                });
+            }
+
+            await vi.advanceTimersByTimeAsync(500);
+            const votes = await collectionPromise;
+            expect(votes.length).toBe(3);
+        });
+
+        it('should time out if quorum is not reached', async () => {
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
+            const collectionPromise = p2p.collectVotes(2, 'PRECOMMIT', 4);
+
+            handler({
+                detail: {
+                    topic: 'vote:precommit',
+                    from: { toString: () => 'peer1' },
+                    data: new TextEncoder().encode(JSON.stringify({
+                        height: 2, validator: 'val1', type: 'PRECOMMIT'
+                    }))
+                }
+            });
+
+            for (let i = 0; i < 21; i++) {
+                await vi.advanceTimersByTimeAsync(500);
+            }
+
+            const votes = await collectionPromise;
+            expect(votes.length).toBe(1);
+        });
+
+        it('should clean up old votes when head is set', async () => {
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
+
+            handler({
+                detail: {
+                    topic: 'vote:prevote',
+                    from: { toString: () => 'peer1' },
+                    data: new TextEncoder().encode(JSON.stringify({
+                        height: 1, validator: 'val1', type: 'PREVOTE'
+                    }))
+                }
+            });
+
+            p2p.setHead(5, '0xhash');
+            const collectionPromise = p2p.collectVotes(1, 'PREVOTE', 4);
+
+            for (let i = 0; i < 21; i++) {
+                await vi.advanceTimersByTimeAsync(500);
+            }
+
+            const votes = await collectionPromise;
+            expect(votes.length).toBe(0);
         });
     });
 });

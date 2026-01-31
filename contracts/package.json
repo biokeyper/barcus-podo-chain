@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "node": "hardhat node",
+    "node": "hardhat node --port 8555",
     "deploy": "hardhat run scripts/deploy.ts --network localhost"
   },
   "devDependencies": {
