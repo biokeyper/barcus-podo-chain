@@ -31,15 +31,24 @@ describe('P2P Integration (Real Nodes)', () => {
     await new Promise(r => setTimeout(r, 1000));
     try {
       if (node1?.node) {
-        await node1.node.stop();
-        await new Promise(r => setTimeout(r, 200));
+        try {
+          await node1.node.stop();
+        } catch (err) {
+          console.error('[Test] Error stopping node1:', err);
+        }
+        await new Promise(r => setTimeout(r, 500));
       }
       if (node2?.node) {
-        await node2.node.stop();
-        await new Promise(r => setTimeout(r, 200));
+        try {
+          await node2.node.stop();
+        } catch (err) {
+          console.error('[Test] Error stopping node2:', err);
+        }
+        await new Promise(r => setTimeout(r, 500));
       }
     } catch (err) {
       // Ignore teardown errors as they are often just closing-stream noise
+      console.error('[Test] Cleanup error:', err);
     }
   });
 
