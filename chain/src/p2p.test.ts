@@ -273,4 +273,149 @@ describe('P2P Gossip Logging & Broadcast', () => {
             expect(votes.length).toBe(0);
         });
     });
+
+    describe('Faulty Validator Behavior', () => {
+        beforeEach(async () => {
+            await p2p.start(7001);
+        });
+
+        it('should still achieve quorum with one missing validator vote', async () => {
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
+            const collectionPromise = p2p.collectVotes(1, 'PREVOTE', 4); // Quorum of 3 required (2/3 of 4)
+
+            // Only 3 out of 4 validators send votes (val4 is missing/faulty)
+            for (let i = 1; i <= 3; i++) {
+                handler({
+                    detail: {
+                        topic: 'vote:prevote',
+                        from: { toString: () => `peer${i}` },
+                        data: new TextEncoder().encode(JSON.stringify({
+                            height: 1, validator: `val${i}`, type: 'PREVOTE'
+                        }))
+                    }
+                });
+            }
+
+            await vi.advanceTimersByTimeAsync(500);
+            const votes = await collectionPromise;
+            expect(votes.length).toBe(3);
+            expect(votes.map((v: any) => v.validator)).toEqual(['val1', 'val2', 'val3']);
+        });
+
+        it('should handle delayed votes from faulty validator', async () => {
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
+            const collectionPromise = p2p.collectVotes(2, 'PRECOMMIT', 4);
+
+            // Validators 1-3 send votes immediately
+            for (let i = 1; i <= 3; i++) {
+                handler({
+                    detail: {
+                        topic: 'vote:precommit',
+                        from: { toString: () => `peer${i}` },
+                        data: new TextEncoder().encode(JSON.stringify({
+                            height: 2, validator: `val${i}`, type: 'PRECOMMIT'
+                        }))
+                    }
+                });
+            }
+
+            await vi.advanceTimersByTimeAsync(500);
+            
+            // Faulty validator (val4) sends vote late (after quorum already reached)
+            handler({
+                detail: {
+                    topic: 'vote:precommit',
+                    from: { toString: () => 'peer4' },
+                    data: new TextEncoder().encode(JSON.stringify({
+                        height: 2, validator: 'val4', type: 'PRECOMMIT'
+                    }))
+                }
+            });
+
+            const votes = await collectionPromise;
+            expect(votes.length).toBe(3); // Quorum already achieved
+        });
+
+        it('should fail quorum with 2 or more missing validators', async () => {
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
+            const collectionPromise = p2p.collectVotes(3, 'PREVOTE', 4);
+
+            // Only 2 validators send votes (val3 and val4 are faulty/missing)
+            for (let i = 1; i <= 2; i++) {
+                handler({
+                    detail: {
+                        topic: 'vote:prevote',
+                        from: { toString: () => `peer${i}` },
+                        data: new TextEncoder().encode(JSON.stringify({
+                            height: 3, validator: `val${i}`, type: 'PREVOTE'
+                        }))
+                    }
+                });
+            }
+
+            // Wait for timeout (21 intervals * 500ms = 10.5s, exceeds 20 attempts at 500ms)
+            for (let i = 0; i < 21; i++) {
+                await vi.advanceTimersByTimeAsync(500);
+            }
+
+            const votes = await collectionPromise;
+            expect(votes.length).toBe(2); // Below quorum threshold of 3
+        });
+
+        it('should tolerate Byzantine behavior with partial vote recovery', async () => {
+            const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
+            const collectionPromise = p2p.collectVotes(4, 'PRECOMMIT', 4);
+
+            // First round: val1 and val2 send votes
+            handler({
+                detail: {
+                    topic: 'vote:precommit',
+                    from: { toString: () => 'peer1' },
+                    data: new TextEncoder().encode(JSON.stringify({
+                        height: 4, validator: 'val1', type: 'PRECOMMIT'
+                    }))
+                }
+            });
+
+            handler({
+                detail: {
+                    topic: 'vote:precommit',
+                    from: { toString: () => 'peer2' },
+                    data: new TextEncoder().encode(JSON.stringify({
+                        height: 4, validator: 'val2', type: 'PRECOMMIT'
+                    }))
+                }
+            });
+
+            // Advance time
+            await vi.advanceTimersByTimeAsync(1000);
+
+            // Second round: val3 and val4 eventually send votes (Byzantine recovery)
+            handler({
+                detail: {
+                    topic: 'vote:precommit',
+                    from: { toString: () => 'peer3' },
+                    data: new TextEncoder().encode(JSON.stringify({
+                        height: 4, validator: 'val3', type: 'PRECOMMIT'
+                    }))
+                }
+            });
+
+            handler({
+                detail: {
+                    topic: 'vote:precommit',
+                    from: { toString: () => 'peer4' },
+                    data: new TextEncoder().encode(JSON.stringify({
+                        height: 4, validator: 'val4', type: 'PRECOMMIT'
+                    }))
+                }
+            });
+
+            await vi.advanceTimersByTimeAsync(500);
+
+            const votes = await collectionPromise;
+            expect(votes.length).toBe(4); // All validators eventually participated
+            expect(votes.map((v: any) => v.validator).sort()).toEqual(['val1', 'val2', 'val3', 'val4']);
+        });
+    });
 });
