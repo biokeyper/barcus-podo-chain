@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 contract DataToken is ERC721, Ownable {
     uint256 public nextId = 1;
 
-    constructor() ERC721("BarcusData", "PODO") Ownable(msg.sender) {}
+    constructor() ERC721("PoDO DataToken", "PODT") {}
 
     function mintTo(address to) external onlyOwner returns (uint256) {
         uint256 tokenId = nextId++;

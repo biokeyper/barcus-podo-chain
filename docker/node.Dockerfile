@@ -1,5 +1,5 @@
 # docker/node.Dockerfile
-FROM node:22-alpine
+FROM node:20-alpine
 
 # Set working directory
 WORKDIR /app
@@ -9,7 +9,6 @@ COPY chain ./chain
 
 # Build using your local modules
 WORKDIR /app/chain
-RUN npm install
 RUN npm run build
 
 # Start the node

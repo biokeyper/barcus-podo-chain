@@ -10,20 +10,6 @@ export class State {
     this.db = new Level<string, string>(path, { valueEncoding: "utf8" });
   }
 
-  async initialize(genesisBlock: Block) {
-    try {
-      await this.db.get("head");
-    } catch {
-      // Database is empty, set up genesis
-      await this.commitBlock(genesisBlock);
-      // Give initial balances to validators for testing visibility
-      const validators = ['val1', 'val2', 'val3', 'val4'];
-      for (const val of validators) {
-        await this.setBalance(val, 1000000);
-      }
-    }
-  }
-
   async getBalance(addr: string): Promise<number> {
     try {
       return Number(await this.db.get(`bal:${addr}`));
@@ -65,23 +51,6 @@ export class State {
   async commitBlock(block: Block) {
     await this.db.put(`blk:${block.header.height}`, JSON.stringify(block));
     await this.db.put("head", String(block.header.height));
-  }
-
-  async getBlock(height: number): Promise<Block | undefined> {
-    try {
-      const v = await this.db.get(`blk:${height}`);
-      return JSON.parse(v);
-    } catch {
-      return undefined;
-    }
-  }
-
-  async getHead(): Promise<number> {
-    try {
-      return Number(await this.db.get("head"));
-    } catch {
-      return 0;
-    }
   }
 }
 

@@ -8,7 +8,7 @@ Minimal backbone for **Barcus**, a Proof of Data Ownership (PoDO) blockchain: li
 
 Make sure you have the following installed:
 
-- **Node.js >= 22** (required for `Promise.withResolvers`)  
+- **Node.js >= 18**  
   ```bash
   sudo apt update
   sudo apt install -y nodejs npm
@@ -57,9 +57,7 @@ make devnet
 
 - **Chain Node 1 JSON-RPC:** http://localhost:8545  
 - **Chain Node 2 JSON-RPC:** http://localhost:8546  
-- **Chain Node 3 JSON-RPC:** http://localhost:8547  
-- **Chain Node 4 JSON-RPC:** http://localhost:8548  
-- **Hardhat (if running separately):** http://localhost:8555 _(not started by default)_  
+- **Hardhat local chain:** [http://127.0.0.1:8545](http://127.0.0.1:8545)  
 
 ---
 
@@ -98,49 +96,24 @@ make clean
 
 ### Chain Node (CLI)
 
-### Chain Node (CLI)
-
-The devnet is pre-configured for 4 nodes. Node identities are **persistent** (saved in `./chain/data/*/identity.key`), so bootstrap addresses remain stable.
-
-**Environment Setup**:
-Before running, copy the sample environment files:
-```bash
-cd chain
-cp .env.node1.sample .env
-cp .env.node2.sample .env.node2
-cp .env.node3.sample .env.node3
-cp .env.node4.sample .env.node4
-```
-> [!NOTE]
-> For nodes 2, 3, and 4, edit their `.env` files to replace `<NODE1_PEER_ID>` with the actual PeerID printed by Node 1 when it starts.
-
-**Fresh Start (Recommended after code changes)**:
-```bash
-cd chain
-rm -rf data        # Clear old state
-npm run build      # Recompile TypeScript
-```
-
 1. **Terminal 1 - Node 1:**
    ```bash
    cd chain
-   npm start
+   NODE_ID=node1 P2P_PORT=7001 RPC_PORT=8545 VALIDATOR_ADDR=val1 npm start
    ```
 
-2. **Terminal 2+ (Nodes 2, 3, 4):**
+2. **Terminal 2 - Node 2:**
    ```bash
    cd chain
-   # For node 2
-   export $(cat .env.node2 | xargs) && npm start
-   # For node 3
-   export $(cat .env.node3 | xargs) && npm start
+   BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/<NODE1_ID>" \
+   NODE_ID=node2 P2P_PORT=7002 RPC_PORT=8546 VALIDATOR_ADDR=val2 npm start
    ```
 
 ### Contracts
 
 ```bash
 cd contracts
-npm run node
+npx hardhat node
 npx hardhat run scripts/deploy.ts --network localhost
 ```
 
@@ -156,33 +129,25 @@ npx hardhat run scripts/deploy.ts --network localhost
 - **Run tests (chain):**  
   ```bash
   cd chain
-  npm test  # ~15 seconds total
-  ```  
-  _Note: Tests use stability patches (graceful shutdown) to ensure clean execution._
+  npm test
+  ```
+- **Run tests (contracts):**  
+  ```bash
+  cd contracts
+  npx hardhat test
+  ```
+- **Lint code:**  
+  ```bash
+  npm run lint
+  ```
 
 ---
 
 ## 🩺 Troubleshooting
 
 - **Missing build tools:** LevelDB requires C++ compilation.  
-- **Port conflicts:** Ensure `8545/8546/8547` (RPC) and `7001/7002/7003` (P2P) are free.  
-- **Libp2p/Level errors:** Ensure Node.js >= 22 is installed.
-- **Local connection only**: Nodes bind to `127.0.0.1` by default for local testing. To allow external connections (e.g., Docker), change the listen address in `chain/src/p2p.ts` from `127.0.0.1` to `0.0.0.0`.
-
----
-
-## ⚠️ Known Issues
-
-- **P2P Implementation:** Currently using FloodSub for reliably simplified message propagation in devnet/tests.
-  - **Stability:** Integration tests include automated teardown and error filtering to prevent `StreamStateError` during rapid node recycling.
-  
-- **GossipSub Latency:** In very small networks (3-4 nodes), GossipSub mesh formation can take 10-30 seconds. Devnet defaults to aggressive peer discovery to minimize this.
-
----
-
-## 🔄 Synchronization
-
-- **Block Synchronization:** Late-joining nodes automatically detect when they are behind the network height and trigger a catch-up process. They request historical blocks from peers using the `/barcus/sync/1.0.0` protocol to sync their local state before joining the BFT consensus loop.
+- **Port conflicts:** Ensure `8545/8546` (RPC) and `7001/7002` (P2P) are free.  
+- **Libp2p/Level errors:** See `[Looks like the result wasn't safe to show. Let's switch things up and try something else!]`.
 
 ---
 
@@ -214,8 +179,8 @@ make devnet
 
 Expected output:
 ```
-Devnet running. RPC: http://localhost:8545 (node1) | http://localhost:8546 (node2) | http://localhost:8547 (node3)
-Hardhat JSON-RPC: http://127.0.0.1:8555
+Devnet running. RPC: http://localhost:8545 | http://localhost:8546
+Hardhat JSON-RPC: http://127.0.0.1:8545
 ```
 
 ### Option B: Run locally
@@ -252,10 +217,9 @@ Barcus uses a **naive BFT loop** with three gossip topics:
 
 **Expected logs (inbound):**
 ```
-[P2P] Incoming block:proposal from 12D3KooW...: height 1
-[P2P] Validated block proposal from 12D3KooW...: height 1
-[P2P] Incoming vote:prevote from 12D3KooW...: height 1
-[P2P] Incoming vote:precommit from 12D3KooW...: height 1
+[P2P] Incoming block:proposal from ...123456: height 1
+[P2P] Incoming vote:prevote from ...123456: height 1
+[P2P] Incoming vote:precommit from ...123456: height 1
 ```
 
 Consensus is reached when ≥2/3 validators send precommits for the same block.
@@ -264,24 +228,17 @@ Consensus is reached when ≥2/3 validators send precommits for the same block.
 
 ## 🌐 Multi‑Node Scaling
 
-## 🌐 Multi‑Node Scaling
-
-The default devnet executes a 4-node validator set. Nodes use **persistent identities** to ensure they find each other instantly across restarts.
-
-To start nodes 2, 3, or 4 manually:
+To add Node 3:
 
 ```bash
-cd chain
-export $(cat .env.node4 | xargs) && npm start
+BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/<NODE1_ID>" \
+NODE_ID=node3 P2P_PORT=7003 RPC_PORT=8547 VALIDATOR_ADDR=val3 npm start
 ```
 
-You'll see subscription changes as the node discovers the existing network:
+You’ll see:
 ```
-[P2P] Subscription change for peer 12D3KooW...: block:proposal, vote:prevote, vote:precommit
-[P2P] Connected to peer: 12D3KooW
+[P2P] Published message on block:proposal to 2 peers.
 ```
-
-> **Note:** Allow 5-10 seconds after node startup for FloodSub subscriptions to fully propagate before expecting all nodes to receive messages.
 
 ---
 
@@ -302,17 +259,6 @@ Use `VALIDATOR_ADDR` or CLI flags to set role.
 - Chain state stored in `./data/<NODE_ID>` via LevelDB.  
 - Snapshots can be taken after each commit.  
 - `make clean` wipes state for a fresh devnet.
-
-
----
-
-## 🛠️ Helper Scripts
-
-Located in `chain/scripts/`, these help with node operations:
-
-- `start-node3.sh`: Quickly start node 3 connecting to node 1.
-- `get-peer-id.js`: Fetch peer ID from a running node.
-- `test-node3-gossip.js`: Verify gossip propagation.
 
 ---
 
@@ -349,14 +295,14 @@ Future enhancements:
 |   Node 1 (val1)   |<----->|   Node 2 (val2)   |
 | RPC:8545, P2P:7001|       | RPC:8546, P2P:7002|
 +-------------------+       +-------------------+
-         ^    ^                    ^
-         |    |                    |
-         |    +-----------+--------+
-         |                |
- +-------------------+    |
- |   Node 3 (val3)   |<---+
- | RPC:8547, P2P:7003|
- +-------------------+
+         ^                         ^
+         |                         |
+         +-----------+-------------+
+                     |
+             +-------------------+
+             |   Node 3 (val3)   |
+             | RPC:8547, P2P:7003|
+             +-------------------+
 ```
 
 Nodes gossip proposals/votes via libp2p, persist state in LevelDB, and expose JSON‑RPC for clients. Contracts run on Hardhat.
