@@ -98,17 +98,42 @@ make clean
 
 ### Chain Node (CLI)
 
+### Chain Node (CLI)
+
+The devnet is pre-configured for 4 nodes. Node identities are **persistent** (saved in `./chain/data/*/identity.key`), so bootstrap addresses remain stable.
+
+**Environment Setup**:
+Before running, copy the sample environment files:
+```bash
+cd chain
+cp .env.node1.sample .env
+cp .env.node2.sample .env.node2
+cp .env.node3.sample .env.node3
+cp .env.node4.sample .env.node4
+```
+> [!NOTE]
+> For nodes 2, 3, and 4, edit their `.env` files to replace `<NODE1_PEER_ID>` with the actual PeerID printed by Node 1 when it starts.
+
+**Fresh Start (Recommended after code changes)**:
+```bash
+cd chain
+rm -rf data        # Clear old state
+npm run build      # Recompile TypeScript
+```
+
 1. **Terminal 1 - Node 1:**
    ```bash
    cd chain
-   NODE_ID=node1 P2P_PORT=7001 RPC_PORT=8545 VALIDATOR_ADDR=val1 npm start
+   npm start
    ```
 
-2. **Terminal 2 - Node 2:**
+2. **Terminal 2+ (Nodes 2, 3, 4):**
    ```bash
    cd chain
-   BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/<NODE1_ID>" \
-   NODE_ID=node2 P2P_PORT=7002 RPC_PORT=8546 VALIDATOR_ADDR=val2 npm start
+   # For node 2
+   export $(cat .env.node2 | xargs) && npm start
+   # For node 3
+   export $(cat .env.node3 | xargs) && npm start
    ```
 
 ### Contracts
@@ -241,11 +266,13 @@ Consensus is reached when ≥2/3 validators send precommits for the same block.
 
 ## 🌐 Multi‑Node Scaling
 
-The default devnet runs 3 nodes. To add **Node 4**:
+The default devnet executes a 4-node validator set. Nodes use **persistent identities** to ensure they find each other instantly across restarts.
+
+To start nodes 2, 3, or 4 manually:
 
 ```bash
-BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/7001/p2p/<NODE1_ID>" \
-NODE_ID=node4 P2P_PORT=7004 RPC_PORT=8548 VALIDATOR_ADDR=val4 npm start
+cd chain
+export $(cat .env.node4 | xargs) && npm start
 ```
 
 You'll see subscription changes as the node discovers the existing network:

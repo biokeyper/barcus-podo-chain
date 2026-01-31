@@ -15,6 +15,20 @@ import { Block } from "./types.js";
 import { hashBlock } from "./block.js";
 import { State } from "./state.js";
 import { validateBlockProposal, ValidationError } from "./validation.js";
+import { generateKeyPair, privateKeyFromProtobuf, privateKeyToProtobuf } from "@libp2p/crypto/keys";
+import { peerIdFromPrivateKey } from "@libp2p/peer-id";
+import fs from "fs";
+import path from "path";
+
+const getLocalTs = () => {
+  const d = new Date();
+  return d.getFullYear() + "-" +
+    String(d.getMonth() + 1).padStart(2, "0") + "-" +
+    String(d.getDate()).padStart(2, "0") + " " +
+    String(d.getHours()).padStart(2, "0") + ":" +
+    String(d.getMinutes()).padStart(2, "0") + ":" +
+    String(d.getSeconds()).padStart(2, "0");
+};
 
 export class P2P {
   node!: Libp2p;
@@ -27,21 +41,54 @@ export class P2P {
   private validatedProposals: Map<number, Block> = new Map();
   private state?: State;
   private networkHeight = 0;
+  private maxFinalizedHeight = 0;
   private stopping = false;
 
-  async start(port: number, bootstrapPeers: string[] = [], state?: State, options: { enableMdns?: boolean } = {}) {
-    const { enableMdns = true } = options;
+  private async loadOrCreatePeerId(dataDir: string) {
+    const keyPath = path.join(dataDir, "identity.key");
+    if (fs.existsSync(keyPath)) {
+      const encoded = fs.readFileSync(keyPath);
+      const privKey = await privateKeyFromProtobuf(encoded);
+      return peerIdFromPrivateKey(privKey);
+    }
+
+    // Generate new key
+    console.log(`${getLocalTs()} 🔑 Generating new node identity...`);
+    const privKey = await generateKeyPair("Ed25519");
+    const encoded = privateKeyToProtobuf(privKey);
+
+    // Ensure dir exists
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+
+    fs.writeFileSync(keyPath, encoded);
+    // Set restricted permissions
+    try {
+      fs.chmodSync(keyPath, 0o600);
+    } catch (err) { }
+
+    return peerIdFromPrivateKey(privKey);
+  }
+
+  async start(port: number, bootstrapPeers: string[] = [], state?: State, options: { enableMdns?: boolean, dataDir?: string } = {}) {
+    const { enableMdns = true, dataDir = "./data" } = options;
+
+    const id = await this.loadOrCreatePeerId(dataDir);
+    console.log(`${getLocalTs()} 🆔 Node PeerID: ${id.toString()}`);
+
     this.state = state;
     if (this.state) {
       this.headHeight = await this.state.getHead();
       const lastBlock = await this.state.getBlock(this.headHeight);
       if (lastBlock) {
         this.prevHash = hashBlock(lastBlock);
-        console.log(`[P2P] Resuming from height ${this.headHeight}, head hash: ${this.prevHash}`);
+        console.log(`${getLocalTs()} 💾 Resuming from height #${this.headHeight} (${this.prevHash.slice(0, 10)}…)`);
       }
     }
 
     this.node = await createLibp2p({
+      peerId: id,
       addresses: { listen: [`/ip4/0.0.0.0/tcp/${port}`] },
       transports: [tcp()],
       connectionEncrypters: [noise()],
@@ -87,6 +134,8 @@ export class P2P {
     await pubsub.subscribe("block:proposal");
     await pubsub.subscribe("vote:prevote");
     await pubsub.subscribe("vote:precommit");
+    await pubsub.subscribe("network:status");
+    console.log(`${getLocalTs()} ✨ Subscribed to consensus & status topics`);
 
     pubsub.addEventListener('message', (evt: any) => {
       const { topic, data, from } = evt.detail;
@@ -96,6 +145,11 @@ export class P2P {
         let height = decoded.height;
         if (topic === 'block:proposal' && decoded.header) {
           height = decoded.header.height;
+        } else if (topic === 'network:status') {
+          height = decoded.height;
+          if (height > this.maxFinalizedHeight) {
+            this.maxFinalizedHeight = height;
+          }
         }
 
         if (height && height > this.networkHeight) {
@@ -103,53 +157,35 @@ export class P2P {
         }
 
         if (topic === 'block:proposal' && decoded.header) {
-          height = decoded.header.height;
-
           // Validate block proposal
           try {
             const expectedHeight = this.headHeight + 1;
             validateBlockProposal(decoded, expectedHeight, this.prevHash);
-
-            // Store validated proposal
             this.validatedProposals.set(height, decoded);
-            console.log(`[P2P] Validated block proposal from ${peerId}: height ${height}`);
           } catch (validationErr) {
             if (validationErr instanceof ValidationError) {
-              console.warn(`[P2P] Invalid block proposal from ${peerId} at height ${height}: ${validationErr.message}`);
-            } else {
-              console.error(`[P2P] Error validating block proposal from ${peerId}:`, validationErr);
+              console.warn(`${getLocalTs()} ⚠️  Invalid block proposal from ${peerId.slice(0, 8)} at height ${height}: ${validationErr.message}`);
             }
-            // Don't process invalid proposals
             return;
           }
         }
 
         if (['block:proposal', 'vote:prevote', 'vote:precommit'].includes(topic)) {
-          console.log(`[P2P] Incoming ${topic} from ${peerId}: height ${height}`);
           if (topic.startsWith('vote:')) {
-            const key = `${decoded.height}:${topic}`;
+            const key = `${decoded.height}:${decoded.type}`;
             if (!this.votes.has(key)) this.votes.set(key, new Map());
             this.votes.get(key)!.set(decoded.validator, decoded);
           }
-        } else {
-          console.log(`[P2P] Ignored message on unknown topic ${topic} from ${peerId}`);
         }
-      } catch (err) {
-        console.error(`[P2P] Failed to decode message on topic ${topic}:`, err);
-      }
+      } catch (err) { }
     });
 
-    pubsub.addEventListener('subscription-change', (evt: any) => {
-      const { peerId, subscriptions } = evt.detail;
-      console.log(`[P2P] Subscription change for peer ${peerId.toString()}: ${subscriptions.map((s: any) => s.topic).join(', ')}`);
-    });
-
-    // Manual initial dial for bootstrap peers to ensure immediate connection
+    // Manual initial dial for bootstrap peers
     if (bootstrapPeers.length > 0) {
       for (const peerAddr of bootstrapPeers) {
         try {
           await this.node.dial(multiaddr(peerAddr));
-          console.log(`[P2P] Explicitly dialed bootstrap peer: ${peerAddr}`);
+          console.log(`${getLocalTs()} 🏷  Explicitly dialed bootstrap peer: ${peerAddr}`);
         } catch (err) { }
       }
     }
@@ -178,28 +214,42 @@ export class P2P {
             }
           }
         }
-      } catch (err: any) {
-        // Only log errors that are not expected during normal operation
-        const ignoredErrors = ['StreamClosedError', 'StreamResetError', 'StreamStateError', 'InvalidStateError'];
-        if (!ignoredErrors.includes(err.name)) {
-          console.error('[P2P] Sync stream error:', err);
-        }
-      }
+      } catch (err: any) { }
     });
 
-    console.log(`[P2P] Peer ID: ${this.node.peerId.toString()}`);
-    console.log(`[P2P] Node listening on port ${port}`);
+    console.log(`${getLocalTs()} 🏷  Local node identity is: ${this.node.peerId.toString()}`);
+    console.log(`${getLocalTs()} 🏁 Running libp2p network backend`);
+
+    setInterval(() => {
+      this.broadcast('network:status', { height: this.headHeight }).catch(() => { });
+    }, 5000);
   }
 
   async stop() {
     this.stopping = true;
-    if (this.node) {
-      await this.node.stop();
-    }
+    if (this.node) await this.node.stop();
   }
+
+  getNetworkHeight() { return this.networkHeight; }
+  getMaxFinalizedHeight() { return this.maxFinalizedHeight; }
+  getHeadHeight() { return this.headHeight; }
+  getPrevHash() { return this.prevHash; }
 
   async broadcast(topic: string, data: any) {
     if (this.stopping) return;
+
+    try {
+      let height = data.height;
+      if (topic === 'block:proposal' && data.header) {
+        height = data.header.height;
+        this.validatedProposals.set(height, data);
+      } else if (topic.startsWith('vote:')) {
+        const key = `${data.height}:${data.type}`;
+        if (!this.votes.has(key)) this.votes.set(key, new Map());
+        this.votes.get(key)!.set(data.validator, data);
+      }
+    } catch (err) { }
+
     const pubsub = (this.node.services as any).pubsub;
     if (!pubsub) return;
 
@@ -209,15 +259,12 @@ export class P2P {
     } catch (err: any) {
       if (err.name === 'PublishError' && err.code === 'ERR_NO_PEERS_SUBSCRIBED_TO_TOPIC') {
         let retries = 0;
-        const maxRetries = 5;
-        while (retries < maxRetries) {
+        while (retries < 5) {
           await new Promise(r => setTimeout(r, 100 * Math.pow(2, retries)));
           try {
             await pubsub.publish(topic, payload);
             return;
-          } catch (e: any) {
-            retries++;
-          }
+          } catch (e: any) { retries++; }
         }
       }
     }
@@ -226,94 +273,54 @@ export class P2P {
   collectVotes(height: number, type: string, total: number): Promise<any[]> {
     const key = `${height}:${type}`;
     const target = Math.ceil((2 * total) / 3);
-
     return new Promise((resolve) => {
       let attempts = 0;
       const check = setInterval(() => {
         const collected = this.votes.get(key);
         if (collected && collected.size >= target) {
           clearInterval(check);
-          console.log(`[P2P] Reached quorum for ${type} at height ${height}: ${collected.size}/${total}`);
           resolve(Array.from(collected.values()));
         } else if (++attempts > 20) {
           clearInterval(check);
-          console.log(`[P2P] Timeout waiting for ${type} quorum at height ${height}. Found ${collected?.size || 0}/${total}`);
           resolve(collected ? Array.from(collected.values()) : []);
         }
       }, 500);
     });
   }
 
-  setHead(h: number, hash: string) {
-    this.headHeight = h;
+  setHead(height: number, hash: string) {
+    this.headHeight = height;
     this.prevHash = hash;
     for (const key of this.votes.keys()) {
-      const height = parseInt(key.split(':')[0]);
-      if (height < h) {
-        this.votes.delete(key);
-      }
+      if (parseInt(key.split(':')[0]) < height) this.votes.delete(key);
     }
-    // Clean up old validated proposals
-    for (const height of this.validatedProposals.keys()) {
-      if (height <= h) {
-        this.validatedProposals.delete(height);
-      }
+    for (const h of this.validatedProposals.keys()) {
+      if (h <= height) this.validatedProposals.delete(h);
     }
   }
 
-  getHeadHeight(): number {
-    return this.headHeight;
-  }
-
-  getNetworkHeight(): number {
-    return this.networkHeight;
-  }
-
-  getPrevHash(): string {
-    return this.prevHash;
-  }
-
-  /**
-   * Get a validated block proposal for a specific height, if available.
-   * Returns undefined if no validated proposal exists for that height.
-   */
   getValidatedProposal(height: number): Block | undefined {
     return this.validatedProposals.get(height);
+  }
+
+  async requestBlockFromPeer(peerId: string, height: number): Promise<Block | undefined> {
+    if (this.stopping) return undefined;
+    try {
+      const stream = await this.node.dialProtocol(peerIdFromString(peerId), '/barcus/sync/1.0.0') as any;
+      const encoded = lp.encode([new TextEncoder().encode(JSON.stringify({ height }))]);
+      for await (const chunk of encoded) stream.send(chunk.subarray());
+      const decodedSource = lp.decode(stream);
+      for await (const msg of decodedSource) {
+        const res = new TextDecoder().decode(msg.subarray());
+        if (res) return JSON.parse(res);
+        break;
+      }
+    } catch (err: any) { }
+    return undefined;
   }
 
   getMultiaddrs(): string[] {
     const peerId = this.node.peerId.toString();
     return this.node.getMultiaddrs().map(ma => `${ma.toString()}/p2p/${peerId}`);
-  }
-
-  async requestBlockFromPeer(peerId: string, height: number): Promise<Block | undefined> {
-    if (this.stopping) return undefined;
-    console.log(`[P2P] Requesting block ${height} from ${peerId.slice(0, 8)}...`);
-    try {
-      const stream = await this.node.dialProtocol(peerIdFromString(peerId), '/barcus/sync/1.0.0') as any;
-
-      // Send request
-      const request = [new TextEncoder().encode(JSON.stringify({ height }))];
-      const encoded = lp.encode(request);
-      for await (const chunk of encoded) {
-        stream.send(chunk.subarray());
-      }
-
-      // Read response
-      const decodedSource = lp.decode(stream);
-      for await (const msg of decodedSource) {
-        const res = new TextDecoder().decode(msg.subarray());
-        if (res) {
-          return JSON.parse(res);
-        }
-        break;
-      }
-    } catch (err: any) {
-      const ignoredErrors = ['StreamClosedError', 'StreamResetError', 'StreamStateError', 'InvalidStateError'];
-      if (!ignoredErrors.includes(err.name)) {
-        console.error(`[P2P] Error requesting block ${height} from ${peerId}:`, err);
-      }
-    }
-    return undefined;
   }
 }

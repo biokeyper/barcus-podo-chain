@@ -5,6 +5,16 @@ import { Mempool } from './mempool.js';
 import { P2P } from './p2p.js';
 import { validateBlockProposal } from './validation.js';
 
+const getLocalTs = () => {
+  const d = new Date();
+  return d.getFullYear() + "-" +
+    String(d.getMonth() + 1).padStart(2, "0") + "-" +
+    String(d.getDate()).padStart(2, "0") + " " +
+    String(d.getHours()).padStart(2, "0") + ":" +
+    String(d.getMinutes()).padStart(2, "0") + ":" +
+    String(d.getSeconds()).padStart(2, "0");
+};
+
 export class Consensus {
   private running = false;
 
@@ -41,8 +51,11 @@ export class Consensus {
 
   async step(height: number) {
     let block: Block;
+    const proposerIndex = height % this.validators.length;
+    const proposer = this.validators[proposerIndex];
 
     if (this.isProposer(height)) {
+      console.log(`${getLocalTs()} [Consensus] ✨ Prepared block for height #${height}`);
       block = await this.propose(height);
 
       const expectedHeight = height;
@@ -50,13 +63,13 @@ export class Consensus {
       try {
         validateBlockProposal(block, expectedHeight, expectedPrevHash);
       } catch (err) {
-        console.error(`[Consensus] Invalid block proposal at height ${height}:`, err);
+        console.error(`${getLocalTs()} ⚠️  Invalid block proposal at height #${height}:`, err);
         return;
       }
 
       await this.p2p.broadcast('block:proposal', block);
     } else {
-      const maxRetries = 10;
+      const maxRetries = 50; // Wait up to 5s for the proposal
       let retries = 0;
       while (retries < maxRetries && this.running) {
         const existing = this.p2p.getValidatedProposal(height);
@@ -81,7 +94,12 @@ export class Consensus {
     await this.p2p.broadcast('vote:prevote', prevote);
 
     const prevotes = await this.p2p.collectVotes(height, 'PREVOTE', this.validators.length);
-    if (!this.running || prevotes.length < Math.ceil((2 * this.validators.length) / 3)) return;
+    if (!this.running) return;
+
+    if (prevotes.length < Math.ceil((2 * this.validators.length) / 3)) {
+      console.log(`${getLocalTs()} [Consensus] 🗳  Collecting prevotes for #${height}... (${prevotes.length}/${this.validators.length})`);
+      return;
+    }
 
     const precommit: Vote = {
       height, round: 0, type: 'PRECOMMIT', blockHash,
@@ -90,23 +108,34 @@ export class Consensus {
     await this.p2p.broadcast('vote:precommit', precommit);
 
     const precommits = await this.p2p.collectVotes(height, 'PRECOMMIT', this.validators.length);
-    if (!this.running || precommits.length < Math.ceil((2 * this.validators.length) / 3)) return;
+    if (!this.running) return;
+
+    if (precommits.length < Math.ceil((2 * this.validators.length) / 3)) {
+      console.log(`${getLocalTs()} [Consensus] 🗳  Collecting precommits for #${height}... (${precommits.length}/${this.validators.length})`);
+      return;
+    }
 
     for (const tx of block.txs) {
       if (!this.running) break;
-      try { await applyTx(this.state, tx); } catch (e) { /* log */ }
+      try {
+        await applyTx(this.state, tx);
+      } catch (e: any) {
+        console.error(`${getLocalTs()} ⚠️  Failed to apply transaction: ${e.message}`);
+      }
     }
     if (!this.running) return;
 
+    const hash = hashBlock(block);
     await this.state.commitBlock(block);
-    this.p2p.setHead(height, blockHash);
+    this.p2p.setHead(height, hash);
+    console.log(`${getLocalTs()} [Consensus] 🔨 Imported #${height} (${hash.slice(0, 10)}…)`);
   }
 
   async sync(targetHeight: number) {
-    let currentHeight = Number(await this.p2p.getHeadHeight());
+    let currentHeight = await this.state.getHead();
     if (currentHeight >= targetHeight) return;
 
-    console.log(`[Consensus] Synchronizing from height ${currentHeight} to ${targetHeight}...`);
+    console.log(`${getLocalTs()} [Consensus] ⏩ Syncing from #${currentHeight} to #${targetHeight}...`);
 
     for (let h = currentHeight + 1; h <= targetHeight; h++) {
       if (!this.running) break;
@@ -125,19 +154,18 @@ export class Consensus {
           validateBlockProposal(block, h, prevHash);
           for (const tx of block.txs) {
             if (!this.running) break;
-            try { await applyTx(this.state, tx); } catch (e) { /* log */ }
+            try { await applyTx(this.state, tx); } catch (e) { }
           }
           if (!this.running) break;
           await this.state.commitBlock(block);
           const blockHash = hashBlock(block);
           this.p2p.setHead(h, blockHash);
-          console.log(`[Consensus] Synchronized block #${h} (${blockHash.slice(0, 10)}...)`);
+          console.log(`${getLocalTs()} [Consensus] ⏩ Syncing block #${h} (${blockHash.slice(0, 10)}…)`);
         } catch (err) {
-          console.error(`[Consensus] Failed to validate synced block #${h}:`, err);
+          console.error(`${getLocalTs()} ⚠️  Failed to validate synced block #${h}`);
           break;
         }
       } else {
-        console.warn(`[Consensus] Could not find block #${h} from any peer`);
         break;
       }
     }
@@ -145,22 +173,36 @@ export class Consensus {
 
   async run() {
     this.running = true;
-    while (this.running) {
-      const networkHeight = this.p2p.getNetworkHeight();
-      const currentHeight = this.p2p.getHeadHeight();
-      const peerCount = this.p2p.node.getPeers().length;
+    let iterations = 0;
 
-      if (networkHeight > currentHeight) {
-        console.log(`[Consensus] Network height (${networkHeight}) is ahead of local height (${currentHeight}). Peers: ${peerCount}. Starting sync...`);
-        await this.sync(networkHeight);
+    while (this.running) {
+      const headHeight = await this.state.getHead();
+      const networkHeight = this.p2p.getNetworkHeight();
+      const maxFinalizedHeight = this.p2p.getMaxFinalizedHeight();
+
+      // Periodic status log (every ~5s)
+      if (iterations % 5 === 0) {
+        const lastBlock = await this.state.getBlock(headHeight);
+        const hash = lastBlock ? hashBlock(lastBlock).slice(0, 10) : '0x0000';
+        const isSyncing = (headHeight > 0 && maxFinalizedHeight > headHeight) ||
+          (headHeight === 0 && maxFinalizedHeight > 0);
+        const status = isSyncing ? '⏩ Syncing' : '💤 Idle';
+        const peerCount = this.p2p.node.getPeers().length;
+
+        console.log(`${getLocalTs()} ${status} (${peerCount} peers), best: #${headHeight} (${hash}…), finalized #${headHeight} (${hash}…)`);
       }
 
-      const nextHeight = this.p2p.getHeadHeight() + 1;
-      // console.log(`[Consensus] Running consensus step for height ${nextHeight}...`);
+      // Sync logic: only sync if someone is strictly ahead of our next expected block OR confirmed finalized height is ahead.
+      if (maxFinalizedHeight > headHeight || networkHeight > headHeight + 1) {
+        await this.sync(Math.max(networkHeight, maxFinalizedHeight));
+      }
+
+      const nextHeight = (await this.state.getHead()) + 1;
       await this.step(nextHeight);
 
       if (!this.running) break;
       await new Promise(r => setTimeout(r, 1000));
+      iterations++;
     }
   }
 }

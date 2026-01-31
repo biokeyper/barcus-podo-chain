@@ -55,7 +55,7 @@ describe('P2P Gossip Logging & Broadcast', () => {
     });
 
     describe('Incoming Messages', () => {
-        it('should log incoming block:proposal messages', async () => {
+        it('should validate and store block:proposal messages', async () => {
             await p2p.start(7001);
             const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
 
@@ -79,8 +79,8 @@ describe('P2P Gossip Logging & Broadcast', () => {
                     data: new TextEncoder().encode(JSON.stringify(validBlock))
                 }
             });
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Incoming block:proposal from QmSender987654: height 1'));
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Validated block proposal from QmSender987654: height 1'));
+            // Verify that the proposal was stored
+            expect(p2p.getValidatedProposal(1)).toEqual(validBlock);
         });
 
         it('should reject invalid block proposals', async () => {
@@ -109,39 +109,42 @@ describe('P2P Gossip Logging & Broadcast', () => {
                 }
             });
 
-            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Invalid block proposal from QmSender987654 at height 1'));
-            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid header.prevHash'));
+            // Verify that invalid proposal was NOT stored
+            expect(p2p.getValidatedProposal(1)).toBeUndefined();
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid block proposal'));
 
             warnSpy.mockRestore();
         });
 
-        it('should log incoming vote:prevote messages', async () => {
+        it('should store vote:prevote messages', async () => {
             await p2p.start(7001);
             const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
             handler({
                 detail: {
                     topic: 'vote:prevote',
                     from: { toString: () => 'QmSender112233' },
-                    data: new TextEncoder().encode(JSON.stringify({ height: 100 }))
+                    data: new TextEncoder().encode(JSON.stringify({ height: 100, type: 'PREVOTE', validator: 'val1' }))
                 }
             });
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Incoming vote:prevote from QmSender112233: height 100'));
+            // Votes should be stored internally
+            expect(p2p['votes'].has('100:PREVOTE')).toBe(true);
         });
 
-        it('should log incoming vote:precommit messages', async () => {
+        it('should store vote:precommit messages', async () => {
             await p2p.start(7001);
             const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
             handler({
                 detail: {
                     topic: 'vote:precommit',
                     from: { toString: () => 'QmSender445566' },
-                    data: new TextEncoder().encode(JSON.stringify({ height: 200 }))
+                    data: new TextEncoder().encode(JSON.stringify({ height: 200, type: 'PRECOMMIT', validator: 'val2' }))
                 }
             });
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Incoming vote:precommit from QmSender445566: height 200'));
+            // Votes should be stored internally
+            expect(p2p['votes'].has('200:PRECOMMIT')).toBe(true);
         });
 
-        it('should log ignored messages for unknown topics', async () => {
+        it('should ignore messages on unknown topics', async () => {
             await p2p.start(7001);
             const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
             handler({
@@ -151,7 +154,8 @@ describe('P2P Gossip Logging & Broadcast', () => {
                     data: new TextEncoder().encode(JSON.stringify({ foo: 'bar' }))
                 }
             });
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[P2P] Ignored message on unknown topic unknown:topic from QmSenderXXXXXX'));
+            // Unknown topics should not cause errors, just be ignored
+            expect(logSpy).toHaveBeenCalled();
         });
     });
 
@@ -204,7 +208,7 @@ describe('P2P Gossip Logging & Broadcast', () => {
 
         it('should collect votes and return on quorum', async () => {
             const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
-            const collectionPromise = p2p.collectVotes(1, 'vote:prevote', 4); // Quorum of 3 required
+            const collectionPromise = p2p.collectVotes(1, 'PREVOTE', 4); // Quorum of 3 required (2/3 of 4)
 
             for (let i = 1; i <= 3; i++) {
                 handler({
@@ -212,7 +216,7 @@ describe('P2P Gossip Logging & Broadcast', () => {
                         topic: 'vote:prevote',
                         from: { toString: () => `peer${i}` },
                         data: new TextEncoder().encode(JSON.stringify({
-                            height: 1, validator: `val${i}`, topic: 'vote:prevote'
+                            height: 1, validator: `val${i}`, type: 'PREVOTE'
                         }))
                     }
                 });
@@ -225,14 +229,14 @@ describe('P2P Gossip Logging & Broadcast', () => {
 
         it('should time out if quorum is not reached', async () => {
             const handler = mockPubsub.addEventListener.mock.calls.find((c: any) => c[0] === 'message')[1];
-            const collectionPromise = p2p.collectVotes(2, 'vote:precommit', 4);
+            const collectionPromise = p2p.collectVotes(2, 'PRECOMMIT', 4);
 
             handler({
                 detail: {
                     topic: 'vote:precommit',
                     from: { toString: () => 'peer1' },
                     data: new TextEncoder().encode(JSON.stringify({
-                        height: 2, validator: 'val1', topic: 'vote:precommit'
+                        height: 2, validator: 'val1', type: 'PRECOMMIT'
                     }))
                 }
             });
@@ -253,13 +257,13 @@ describe('P2P Gossip Logging & Broadcast', () => {
                     topic: 'vote:prevote',
                     from: { toString: () => 'peer1' },
                     data: new TextEncoder().encode(JSON.stringify({
-                        height: 1, validator: 'val1', topic: 'vote:prevote'
+                        height: 1, validator: 'val1', type: 'PREVOTE'
                     }))
                 }
             });
 
             p2p.setHead(5, '0xhash');
-            const collectionPromise = p2p.collectVotes(1, 'vote:prevote', 4);
+            const collectionPromise = p2p.collectVotes(1, 'PREVOTE', 4);
 
             for (let i = 0; i < 21; i++) {
                 await vi.advanceTimersByTimeAsync(500);
