@@ -1,10 +1,16 @@
 name: Tests
+# Test Suite: 44 tests across 8 test files
+# - Consensus: 3 tests (block proposal, voting, synchronization)
+# - P2P: 15 tests (messaging, faulty validators, quorum handling)
+# - Validation: 20 tests (transaction and block validation)
+# - State: 2 tests (LevelDB persistence)
+# - Integration: 4 tests (bootstrap, sync, gossip)
 
 on:
   push:
-    branches: [ main, dev, feat/synch-nodes, feat/consensus-logging ]
+    branches: [ main, dev, feat/synch-nodes, feat/consensus-logging, feat/simulate-aulty-validator-behavior ]
   pull_request:
-    branches: [ main, dev, feat/synch-nodes, feat/consensus-logging ]
+    branches: [ main, dev, feat/synch-nodes, feat/consensus-logging, feat/simulate-aulty-validator-behavior ]
 
 jobs:
   test-chain:
@@ -30,7 +36,7 @@ jobs:
       working-directory: ./chain
       run: npm ci
     
-    - name: Run tests
+    - name: Run tests (Consensus, P2P, Faulty Validator, Validation)
       working-directory: ./chain
       run: npm test
     
